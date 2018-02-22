@@ -12,32 +12,34 @@ use IEEE.NUMERIC_STD.ALL;
 
 entity AXI_ADDRESS_CONTROL_CHANNEL is
 	PORT
-		(
-		-- User signals
-		clk               : in  STD_LOGIC;
-		resetn            : in  STD_LOGIC;
-		go                : in  STD_LOGIC;
-		done              : out STD_LOGIC;
+	(
+	-- User signals
+	clk               : in  STD_LOGIC;
+	resetn            : in  STD_LOGIC;
+	go                : in  STD_LOGIC;
+	done              : out STD_LOGIC;
         error             : out STD_LOGIC;
         address           : in  STD_LOGIC_VECTOR (31 downto 0);
-        burst_length      : in  INTEGER range 1 to 256;
-        burst_size        : in  INTEGER range 1 to 128;
+        burst_length      : in  INTEGER range 0 to 256;
+        burst_size        : in  INTEGER range 0 to 128;
         increment_burst   : in  STD_LOGIC;
 		
-		-- AXI Master signals
-		AxID              : out STD_LOGIC_VECTOR (3 downto 0);
-		AxADDR		      : out STD_LOGIC_VECTOR (31 downto 0);
-		AxLEN             : out STD_LOGIC_VECTOR (7 downto 0);
-		AxSIZE            : out STD_LOGIC_VECTOR (2 downto 0);
-		AxBURST           : out STD_LOGIC_VECTOR (1 downto 0);
-		AxLOCK            : out STD_LOGIC;
-		AxCACHE           : out STD_LOGIC_VECTOR (3 downto 0);
-		AxPROT            : out STD_LOGIC_VECTOR (2 downto 0);
-		AxVALID		      : out STD_LOGIC;
-		AxREADY		      : in  STD_LOGIC;
-		AxQOS             : out STD_LOGIC_VECTOR (3 downto 0);
-		AxREGION          : out STD_LOGIC_VECTOR (3 downto 0)
-		);
+	-- AXI Master signals
+	AxID              : out STD_LOGIC_VECTOR (3 downto 0);
+	AxADDR		  : out STD_LOGIC_VECTOR (31 downto 0);
+	AxLEN             : out STD_LOGIC_VECTOR (7 downto 0);
+	AxSIZE            : out STD_LOGIC_VECTOR (2 downto 0);
+	AxBURST           : out STD_LOGIC_VECTOR (1 downto 0);
+	AxLOCK            : out STD_LOGIC;
+	AxCACHE           : out STD_LOGIC_VECTOR (3 downto 0);
+	AxPROT            : out STD_LOGIC_VECTOR (2 downto 0);
+	AxVALID		  : out STD_LOGIC;
+	AxREADY		  : in  STD_LOGIC;
+	AxQOS             : out STD_LOGIC_VECTOR (3 downto 0);
+	AxREGION          : out STD_LOGIC_VECTOR (3 downto 0);
+        -- Debug
+        current_state_out : out std_logic_vector(2 downto 0)
+	);
 end AXI_ADDRESS_CONTROL_CHANNEL;
 
 
@@ -73,6 +75,12 @@ AxCACHE <= (others => '0');  -- Non-bufferable & Non-cacheable
 AxPROT <= (others => '0');  -- Normal access, secure access, data access.
 AxQOS <= (others => '0');  -- QoS scheme not used.
 AxREGION <= (others => '0');  -- Memory region scheme not used; defaulting to region zero.
+current_state_out <= "000" when current_state = reset else
+                     "001" when current_state = idle else
+                     "010" when current_state = running else
+                     "011" when current_state = error_detected else
+                     "100" when current_state = complete else
+                     "111";
 
 -- Decode and generate Burst Size output signal
 burst_size_process : process (current_state, burst_size)

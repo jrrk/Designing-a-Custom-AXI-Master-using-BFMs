@@ -13,29 +13,31 @@ use IEEE.STD_LOGIC_1164.ALL;
 entity AXI_WRITE_DATA_CHANNEL is
     GENERIC
         (
-        data_width      : integer range 32 to 64 := 32
+        data_width          : integer range 32 to 64 := 32
         );
 	PORT
-		(
-		-- User signals
-		clk             : in  STD_LOGIC;
-		resetn          : in  STD_LOGIC;
-		data            : in  STD_LOGIC_VECTOR(data_width-1 downto 0);
-		data_valid      : in  std_logic;
-		go              : in  STD_LOGIC;
-        done            : out STD_LOGIC;
-		last_transfer   : in  std_logic;
-        data_sent       : out std_logic;
-        transaction_ID  : in  STD_LOGIC_VECTOR(3 downto 0);
+	(
+	-- User signals
+	clk                 : in  STD_LOGIC;
+	resetn              : in  STD_LOGIC;
+	data                : in  STD_LOGIC_VECTOR(data_width-1 downto 0);
+	data_valid          : in  std_logic;
+	go                  : in  STD_LOGIC;
+        done                : out STD_LOGIC;
+	last_transfer       : in  std_logic;
+        data_sent           : out std_logic;
+        transaction_ID      : in  STD_LOGIC_VECTOR(3 downto 0);
         
-		-- AXI Master signals
-		WID			    : out STD_LOGIC_VECTOR(3 downto 0);
-		WDATA		    : out STD_LOGIC_VECTOR(data_width-1 downto 0);
-		WSTRB		    : out STD_LOGIC_VECTOR((data_width/8)-1 downto 0);
-		WLAST           : out STD_LOGIC;
-		WVALID		    : out STD_LOGIC;
-		WREADY		    : in  STD_LOGIC
-		);
+	-- AXI Master signals
+	WID		    : out STD_LOGIC_VECTOR(3 downto 0);
+	WDATA		    : out STD_LOGIC_VECTOR(data_width-1 downto 0);
+	WSTRB		    : out STD_LOGIC_VECTOR((data_width/8)-1 downto 0);
+	WLAST               : out STD_LOGIC;
+	WVALID		    : out STD_LOGIC;
+	WREADY		    : in  STD_LOGIC;
+    -- Debug
+    current_state_out   : out std_logic_vector(2 downto 0)
+	);
 end AXI_WRITE_DATA_CHANNEL;
 
 
@@ -73,6 +75,13 @@ signal send_data_to_wdata : std_logic;
 
 
 begin
+current_state_out <= "000" when current_state = reset else
+                     "001" when current_state = idle else
+                     "010" when current_state = running else
+                     "011" when current_state = stalled else
+                     "100" when current_state = complete else
+                     "111";
+
 -- Automated data width checking
 width_check <= generate_data_width_error(data_width);
 

@@ -25,14 +25,7 @@ entity AXI_master is
         burst_length        : in  std_logic_vector(7 downto 0); -- number of beats in a burst
         burst_size          : in  std_logic_vector(6 downto 0); -- number of byte lanes in each beat
         increment_burst     : in  std_logic;  -- 1 = incrementing addresses, 0 = mailbox / fifo style writes
-        clear_data_fifos    : in  std_logic;
-        write_fifo_en       : in  std_logic;
-        write_fifo_empty    : out std_logic;
-        write_fifo_full     : out std_logic;
-        read_fifo_en        : in  std_logic;
-        read_fifo_empty     : out std_logic;
-        read_fifo_full      : out std_logic;
-        
+
         --  AXI4 Signals
         --  AXI4 Clock / Reset
         m_axi_aclk              : in  std_logic;
@@ -73,7 +66,7 @@ entity AXI_master is
         -- AXI4 Write Data Channel
         m_axi_wready            : in  std_logic;
         m_axi_wvalid            : out std_logic;
-        m_axi_wid			    : out std_logic_vector(3 downto 0);
+        m_axi_wid		        : out std_logic_vector(3 downto 0);
         m_axi_wdata             : out std_logic_vector(data_width-1 downto 0);
         m_axi_wstrb             : out std_logic_vector((data_width/8)-1 downto 0);
         m_axi_wlast             : out std_logic;
@@ -81,69 +74,32 @@ entity AXI_master is
         m_axi_bready            : out std_logic;
         m_axi_bvalid            : in  std_logic;
         m_axi_bresp             : in  std_logic_vector(1 downto 0);
-        m_axi_bid               : in  std_logic_vector(3 downto 0)
+        m_axi_bid               : in  std_logic_vector(3 downto 0);
+        -- External FIFO replacement using Block RAM
+        read_data_valid         : out std_logic;
+        write_data_valid        : out std_logic;
+        -- Debug
+        current_state_out       : out std_logic_vector(2 downto 0);
+        current_state_rac       : out std_logic_vector(2 downto 0);
+        current_state_resp      : out std_logic_vector(2 downto 0);
+        current_state_wrdata    : out std_logic_vector(2 downto 0);
+        start_out               : out std_logic_vector(9 downto 0) 
         );
 end AXI_master;
 
 architecture Behavioral of AXI_master is
 
-COMPONENT data_fifo_32 IS
-    PORT
-        (
-        clk : IN std_logic;
-        rst : IN std_logic;
-        din : IN std_logic_vector(31 DOWNTO 0);
-        wr_en : IN std_logic;
-        rd_en : IN std_logic;
-        dout : OUT std_logic_vector(31 DOWNTO 0);
-        full : OUT std_logic;
-        empty : OUT std_logic
-        );
-END COMPONENT;
-
-COMPONENT data_fifo_64 IS
-    PORT
-        (
-        clk : IN std_logic;
-        rst : IN std_logic;
-        din : IN std_logic_vector(63 DOWNTO 0);
-        wr_en : IN std_logic;
-        rd_en : IN std_logic;
-        dout : OUT std_logic_vector(63 DOWNTO 0);
-        full : OUT std_logic;
-        empty : OUT std_logic
-        );
-END COMPONENT;
-
-COMPONENT fifo_manager is
-    Generic
-        (
-        data_width : integer range 32 to 64 := 32
-        );
-    Port
-        (
-        -- User signals
-        clk              : in  std_logic;
-        resetn           : in  std_logic;
-        data_used        : in  std_logic;
-        data_valid       : out std_logic;
-        fifo_read_enable : out std_logic;
-        fifo_empty_flag  : in  std_logic;
-        data_transferred : out std_logic
-        );
-END COMPONENT;
-
 COMPONENT AXI_ADDRESS_CONTROL_CHANNEL is
 	PORT
-		(
-		clk             : in  std_logic;
+	(
+	    clk             : in  std_logic;
         resetn          : in  std_logic;
         go              : in  std_logic;
         done            : out std_logic;
         error           : out std_logic;
         address         : in  std_logic_vector(31 downto 0);
-        burst_length    : in integer range 1 to 256;
-        burst_size      : in integer range 1 to 128;
+        burst_length    : in integer range 0 to 256;
+        burst_size      : in integer range 0 to 128;
         increment_burst : in  std_logic;
         AxID            : out std_logic_vector (3 downto 0);
         AxADDR          : out std_logic_vector (31 downto 0);
@@ -156,8 +112,10 @@ COMPONENT AXI_ADDRESS_CONTROL_CHANNEL is
         AxVALID         : out std_logic;
         AxREADY         : in   std_logic;
         AxQOS           : out std_logic_vector (3 downto 0);
-        AxREGION        : out std_logic_vector (3 downto 0)
-		);
+        AxREGION        : out std_logic_vector (3 downto 0);
+        -- Debug
+        current_state_out : out std_logic_vector(2 downto 0)
+	);
 END COMPONENT;
 
 COMPONENT AXI_READ_DATA_CHANNEL is
@@ -166,7 +124,7 @@ COMPONENT AXI_READ_DATA_CHANNEL is
         data_width : integer range 32 to 64 := 32
         );
 	PORT
-		(
+	(
         clk             : in  std_logic;
         resetn          : in  std_logic;
         data            : out std_logic_vector(data_width-1 downto 0);
@@ -176,14 +134,14 @@ COMPONENT AXI_READ_DATA_CHANNEL is
         go              : in  std_logic;
         done            : out std_logic;
         error           : out std_logic;
-		transaction_ID  : out std_logic_vector (3 downto 0);
+	transaction_ID  : out std_logic_vector (3 downto 0);
         RID             : in  std_logic_vector (3 downto 0);
         RDATA           : in  std_logic_vector (data_width-1 downto 0);
         RRESP           : in  std_logic_vector (1 downto 0);
         RLAST           : in  std_logic;
         RVALID          : in  std_logic;
         RREADY          : out std_logic
-		);
+	);
 END COMPONENT;
 
 COMPONENT AXI_WRITE_DATA_CHANNEL is
@@ -201,30 +159,34 @@ COMPONENT AXI_WRITE_DATA_CHANNEL is
         done            : out std_logic;
         last_transfer   : in  std_logic;
         data_sent       : out std_logic;
-		transaction_ID  : in  std_logic_vector (3 downto 0);
+	transaction_ID  : in  std_logic_vector (3 downto 0);
         WID             : out std_logic_vector(3 downto 0);
         WDATA           : out std_logic_vector(data_width-1 downto 0);
         WSTRB           : out std_logic_vector((data_width/8)-1 downto 0);
         WLAST           : out std_logic;
         WVALID          : out std_logic;
-        WREADY          : in  std_logic
+        WREADY          : in  std_logic;
+        -- Debug
+        current_state_out : out std_logic_vector(2 downto 0)
         );
 END COMPONENT;
 
 COMPONENT AXI_WRITE_DATA_RESPONSE_CHANNEL is
 	PORT
-		(
-		clk			    : in  std_logic;
-		resetn          : in  std_logic;
+	(
+	clk			    : in  std_logic;
+	resetn          : in  std_logic;
         go              : in  std_logic;
         done            : out std_logic;
         error           : out std_logic;
-		transaction_ID  : out std_logic_vector (3 downto 0);
-		BRESP	        : in  std_logic_vector (1 downto 0);
+	transaction_ID  : out std_logic_vector (3 downto 0);
+	BRESP	        : in  std_logic_vector (1 downto 0);
         BVALID		    : in  std_logic;
         BREADY		    : out std_logic;
-        BID             : in  std_logic_vector (3 downto 0)
-		);
+        BID             : in  std_logic_vector (3 downto 0);
+        -- Debug
+        current_state_out : out std_logic_vector(2 downto 0)
+	);
 END COMPONENT;
 
 -- Implement a function in VHDL to generate an intentional failure if the user chooses a data width other than 32 or 64 bits
@@ -272,16 +234,13 @@ signal send_write_data : std_logic;
 signal read_data_fifo_enable : std_logic;       
 signal write_data_fifo_ready : std_logic;
 signal write_data_fifo_enable : std_logic;       
-signal data_transferred : std_logic;
 signal beat_counter : integer range 0 to 256;
 signal load_beat_counter : std_logic;
 signal enable_beat_counter : std_logic;
 signal write_data_last_transfer : std_logic;
 signal write_data_sent : std_logic;
-signal write_data_valid : std_logic;
 signal write_response_error : std_logic;
 signal read_data_last_transfer : std_logic;
-signal reset_fifos : std_logic;
 signal read_data_channel_error : std_logic;
 signal captured_burst_length : integer range 0 to 256;
 signal captured_burst_size : integer range 0 to 128;
@@ -292,23 +251,6 @@ signal captured_RNW : std_logic;
 signal read_data_transaction_id : std_logic_vector(3 downto 0);
 signal write_data_transaction_id : std_logic_vector(3 downto 0);
 signal write_data_response_transaction_id : std_logic_vector(3 downto 0);
-
--- Data FIFOs
-signal read_data_fifo_input : std_logic_vector(data_width-1 downto 0); 
-signal read_data_fifo_wen : std_logic;
-signal read_data_fifo_en : std_logic;
-signal read_data_fifo_output : std_logic_vector(data_width-1 downto 0);
-signal read_data_fifo_full : std_logic;
-signal read_data_fifo_empty : std_logic;
-signal write_data_fifo_input : std_logic_vector(data_width-1 downto 0); 
-signal write_data_fifo_wen : std_logic;
-signal write_data_fifo_en : std_logic;
-signal write_data_fifo_output : std_logic_vector(data_width-1 downto 0);
-signal write_data_fifo_full : std_logic;
-signal write_data_fifo_empty : std_logic;
-signal write_data_fifo_not_empty : std_logic;
-signal read_data_fifo_full_inv : std_logic;
-
 signal burst_length_internal : integer range 0 to 256;
 signal burst_size_internal : integer range 0 to 128;
 
@@ -318,25 +260,32 @@ begin
 width_check_OK <= generate_data_width_error(data_width);
 
 -- Concurrent assignments
-read_data <= read_data_fifo_output;
-write_data_fifo_input <= write_data;
-reset_fifos <= clear_data_fifos OR not m_axi_aresetn;
-write_data_fifo_wen <= write_fifo_en;    
-write_fifo_empty <= write_data_fifo_empty; 
-write_fifo_full <= write_data_fifo_full;  
-read_data <= read_data_fifo_output;        
-read_data_fifo_en <= read_fifo_en;     
-read_fifo_empty <= read_data_fifo_empty;  
-read_fifo_full <= read_data_fifo_full;   
-read_data_fifo_full_inv <= not read_data_fifo_full;
-write_data_fifo_not_empty <= not write_data_fifo_empty;
+write_data_valid <= enable_beat_counter;
 write_data_transaction_id <= (others => '0');
+
+start_out <=
+ read_address_transaction_finished &
+ write_address_transaction_finished &
+ read_data_transaction_finished &
+ write_data_transaction_finished &
+ write_response_transaction_finished &
+ start_read_address_transaction &
+ start_read_data_transaction &
+ start_write_address_transaction &
+ start_write_data_transaction &
+ start_write_response_transaction;
 
 -- Type Conversions
 burst_length_internal <= to_integer(unsigned(burst_length)) + 1;
 burst_size_internal <= to_integer(unsigned(burst_size));
-
-
+current_state_out <= "000" when current_state = reset else
+                     "001" when current_state = idle else
+                     "010" when current_state = prepare else
+                     "011" when current_state = read_transaction else
+                     "100" when current_state = write_transaction else
+                     "101" when current_state = error_detected else
+                     "110" when current_state = complete else
+                     "111";
 
 -- State machine update process
 state_machine_update : process (m_axi_aclk)
@@ -389,9 +338,10 @@ end process;
 
 
 -- Finite State Machine implementation
-state_machine_decisions : process ( width_check_OK, current_state, read_address_transaction_finished, read_data_transaction_finished, write_address_transaction_finished, write_data_transaction_finished,
-                                    write_response_transaction_finished, read_data_fifo_full, go, captured_RNW, address, write_data, write_data_sent, write_response_error, beat_counter, data_transferred,
-                                    write_data_valid
+state_machine_decisions : process ( width_check_OK, current_state, read_address_transaction_finished, read_data_transaction_finished,
+                                    write_address_transaction_finished, write_data_transaction_finished,
+                                    write_response_transaction_finished, go, captured_RNW, address,
+                                    write_data_sent, write_response_error, beat_counter, write_data_sent
                                   )
 
 begin
@@ -409,8 +359,7 @@ begin
     capture_control_signals <= '0';
     write_data_last_transfer <= '0';
     enable_beat_counter <= '0';
-    
-    
+
 	case current_state is
 		when reset =>
 			next_state <= idle;
@@ -433,17 +382,9 @@ begin
             busy <= '0';
             case captured_RNW is
                 when '1' =>
-                    if read_data_fifo_full = '1' then
-                        next_state <= error_detected;
-                    else
-                        next_state <= read_transaction;
-                    end if;    
+                    next_state <= read_transaction;
                 when '0' =>
-                    if write_data_valid = '0' then
-                        next_state <= error_detected;
-                    else
-                        next_state <= write_transaction;
-                    end if;    
+                    next_state <= write_transaction;
                 when others =>
                     next_state <= error_detected;
             end case;
@@ -451,7 +392,7 @@ begin
 		when read_transaction =>
             next_state <= read_transaction;
             start_read_address_transaction <= '1';
-            enable_beat_counter <= data_transferred; 
+            enable_beat_counter <= write_data_sent; 
             if read_address_transaction_finished = '1' then
                 start_read_data_transaction <= '1';
             end if;
@@ -462,7 +403,7 @@ begin
 		when write_transaction =>
             next_state <= write_transaction;
             start_write_address_transaction <= '1';
-            enable_beat_counter <= data_transferred; 
+            enable_beat_counter <= write_data_sent; 
             if write_address_transaction_finished = '1' then
                 start_write_data_transaction <= '1';
             end if;
@@ -527,7 +468,8 @@ read_address_channel : AXI_ADDRESS_CONTROL_CHANNEL
         AxCACHE => m_axi_arcache,
         AxPROT => m_axi_arprot,
         AxQOS => m_axi_arqos,
-        AxREGION => m_axi_arregion
+        AxREGION => m_axi_arregion,
+        current_state_out => current_state_rac
         );
         
 write_address_channel : AXI_ADDRESS_CONTROL_CHANNEL
@@ -568,9 +510,9 @@ read_data_channel : AXI_READ_DATA_CHANNEL
         go => start_read_data_transaction,
         done => read_data_transaction_finished,
         error => read_data_channel_error,
-        data => read_data_fifo_input,
-        data_valid => read_data_fifo_wen,
-        fifo_ready => read_data_fifo_full_inv,
+        data => read_data,
+        data_valid => read_data_valid,
+        fifo_ready => '1',
         last_transfer => read_data_last_transfer,
         transaction_ID => read_data_transaction_id,
         RDATA => m_axi_rdata,
@@ -592,8 +534,8 @@ write_data_channel : AXI_WRITE_DATA_CHANNEL
         resetn => m_axi_aresetn,
         go => start_write_data_transaction,
         done => write_data_transaction_finished,
-        data => write_data_fifo_output,
-        data_valid => write_data_valid,
+        data => write_data,
+        data_valid => '1',
         last_transfer => write_data_last_transfer,
         data_sent => write_data_sent,
         transaction_ID => write_data_transaction_id,
@@ -602,7 +544,8 @@ write_data_channel : AXI_WRITE_DATA_CHANNEL
         WSTRB => m_axi_wstrb,
         WVALID => m_axi_wvalid,
         WREADY => m_axi_wready,
-        WLAST => m_axi_wlast
+        WLAST => m_axi_wlast,
+        current_state_out => current_state_wrdata
         );
 
 write_data_response_channel : AXI_WRITE_DATA_RESPONSE_CHANNEL
@@ -617,80 +560,8 @@ write_data_response_channel : AXI_WRITE_DATA_RESPONSE_CHANNEL
         BRESP => m_axi_bresp,
         BVALID => m_axi_bvalid,
         BREADY => m_axi_bready,
-        BID => m_axi_bid
+        BID => m_axi_bid,
+        current_state_out => current_state_resp
         );
-
-write_data_fifo_management : fifo_manager
-    GENERIC MAP
-        (
-        data_width => data_width
-        )
-    PORT MAP
-        (
-        clk => m_axi_aclk,
-        resetn => m_axi_aresetn,
-        data_used => write_data_sent,
-        data_valid => write_data_valid,
-        fifo_read_enable => write_data_fifo_en,
-        fifo_empty_flag => write_data_fifo_empty,
-        data_transferred => data_transferred
-        );
-
--- Generate the appropriate FIFO, based on the chosen data width
-generate_32b_data_fifo : 
-    if data_width = 32 GENERATE
-        read_data_fifo_inst : data_fifo_32
-            PORT MAP
-                (
-                clk => m_axi_aclk,
-                rst => reset_fifos,
-                din => read_data_fifo_input, 
-                wr_en => read_data_fifo_wen,
-                rd_en => read_data_fifo_en,
-                dout => read_data_fifo_output,
-                full => read_data_fifo_full,
-                empty => read_data_fifo_empty
-                );
-        write_data_fifo_inst : data_fifo_32
-            PORT MAP
-                (
-                clk => m_axi_aclk,
-                rst => reset_fifos,
-                din => write_data_fifo_input, 
-                wr_en => write_data_fifo_wen,
-                rd_en => write_data_fifo_en,
-                dout => write_data_fifo_output,
-                full => write_data_fifo_full,
-                empty => write_data_fifo_empty
-                );
-end GENERATE;
-
-generate_64b_data_fifo : 
-    if data_width = 64 GENERATE
-        read_data_fifo_inst : data_fifo_64
-        PORT MAP
-            (
-            clk => m_axi_aclk,
-            rst => reset_fifos,
-            din => read_data_fifo_input, 
-            wr_en => read_data_fifo_wen,
-            rd_en => read_data_fifo_en,
-            dout => read_data_fifo_output,
-            full => read_data_fifo_full,
-            empty => read_data_fifo_empty
-            );
-    write_data_fifo_inst : data_fifo_64
-        PORT MAP
-            (
-            clk => m_axi_aclk,
-            rst => reset_fifos,
-            din => write_data_fifo_input, 
-            wr_en => write_data_fifo_wen,
-            rd_en => write_data_fifo_en,
-            dout => write_data_fifo_output,
-            full => write_data_fifo_full,
-            empty => write_data_fifo_empty
-            );
-end GENERATE;
 
 end Behavioral;

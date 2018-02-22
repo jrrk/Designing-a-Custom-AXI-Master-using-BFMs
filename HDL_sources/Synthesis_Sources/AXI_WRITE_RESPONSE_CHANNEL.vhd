@@ -13,16 +13,18 @@ use IEEE.STD_LOGIC_1164.ALL;
 entity AXI_WRITE_DATA_RESPONSE_CHANNEL is
 	PORT
         (
-        clk			    : in  STD_LOGIC;
-        resetn          : in STD_LOGIC;
-        go              : in STD_LOGIC;
-        done            : out STD_LOGIC;
-        error           : out STD_LOGIC;
-        transaction_ID  : out STD_LOGIC_VECTOR (3 downto 0);
-        BID             : in STD_LOGIC_VECTOR (3 downto 0);
-        BRESP	        : in  STD_LOGIC_VECTOR (1 downto 0);
+        clk		    : in  STD_LOGIC;
+        resetn              : in  STD_LOGIC;
+        go                  : in  STD_LOGIC;
+        done                : out STD_LOGIC;
+        error               : out STD_LOGIC;
+        transaction_ID      : out STD_LOGIC_VECTOR (3 downto 0);
+        BID                 : in  STD_LOGIC_VECTOR (3 downto 0);
+        BRESP	            : in  STD_LOGIC_VECTOR (1 downto 0);
         BVALID		    : in  STD_LOGIC;
-        BREADY		    : out  STD_LOGIC
+        BREADY		    : out STD_LOGIC;
+        -- Debug
+        current_state_out   : out std_logic_vector(2 downto 0)
         );
 end AXI_WRITE_DATA_RESPONSE_CHANNEL;
 
@@ -36,6 +38,13 @@ signal current_state, next_state : main_fsm_type := reset;
 
 
 begin
+current_state_out <= "000" when current_state = reset else
+                     "001" when current_state = idle else
+                     "010" when current_state = running else
+                     "011" when current_state = success else
+                     "100" when current_state = error_detected else
+                     "101" when current_state = complete else
+                     "111";
 
 -- State machine update process
 state_machine_update : process (clk)
@@ -62,7 +71,7 @@ end process;
 -- Finite State Machine implementation
 state_machine_decisions : process (current_state, BRESP, BVALID, go)
 begin
-    BREADY <= '1';
+    BREADY <= '0'; -- was '1' ??
     error <= '0';
     done <= '0';
             
