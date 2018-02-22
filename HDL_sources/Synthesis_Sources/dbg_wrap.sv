@@ -41,15 +41,7 @@ module dbg_wrap
     input  logic        tms_i,
     input  logic        tdi_i,
     output logic        tdo_o,
-    output wire       CA,
-    output wire       CB,
-    output wire       CC,
-    output wire       CD,
-    output wire       CE,
-    output wire       CF,
-    output wire       CG,
-    output wire       DP,
-    output wire [7:0] AN
+    output logic [31:0] address  
   );
 
 
@@ -58,7 +50,6 @@ wire error;
 logic RNW;  
 wire busy; 
 wire done; 
-logic [31:0] address;   
 logic [7:0] burst_length;        //: in integer range 1 to 256; -- number of beats in a burst
 logic [6:0] burst_size;          //: in integer range 1 to 128;  -- number of byte lanes in each beat
 logic increment_burst;   

@@ -108,8 +108,8 @@ module wrap_top
    // interrupt line
    logic [63:0]                interrupt;
 
-wire io_emdio_i, phy_emdio_o, phy_emdio_t, clk_rmii, clk_rmii_quad, clk_locked_wiz;
-reg phy_emdio_i, io_emdio_o, io_emdio_t;
+   wire io_emdio_i, phy_emdio_o, phy_emdio_t, clk_rmii, clk_rmii_quad, clk_locked_wiz;
+   reg phy_emdio_i, io_emdio_o, io_emdio_t;
 
    //clock generator
    logic mig_sys_clk, clk_pixel;
@@ -134,11 +134,11 @@ reg phy_emdio_i, io_emdio_o, io_emdio_t;
 
    logic                       hid_irq, sd_irq, eth_irq;
 
-   wire                        hid_rst, hid_clk, hid_en;
-   wire [3:0]                  hid_we, hid_be;
+   wire                        hid_en;
+   wire [7:0]                  hid_we;
    wire [17:0]                 hid_addr;
-   wire [31:0]                 hid_wrdata,  hid_rddata;
-   logic [30:0]                hid_ar_addr, hid_aw_addr;
+   wire [63:0]                 hid_wrdata,  hid_rddata;
+   
    logic [1:0] eth_txd;
    logic eth_rstn, eth_refclk, eth_txen;
    assign o_erstn = eth_rstn & clk_locked_wiz;
@@ -221,6 +221,7 @@ reg phy_emdio_i, io_emdio_o, io_emdio_t;
 
     logic        flush_dcache_ack, flush_dcache;
     logic        flush_dcache_q;
+    logic [31:0] dbg_mstaddress;
     
     AXI_BUS #(
               .AXI_ADDR_WIDTH ( AXI_ADDRESS_WIDTH ),
@@ -231,7 +232,7 @@ reg phy_emdio_i, io_emdio_o, io_emdio_t;
   
 display_top display(.clk    (clk_i),
                  .rst       (!rst_ni),
-                 .bcd_digits(hid_addr),
+                 .bcd_digits(dbg_mstaddress),
                  .CA        (CA),
                  .CB        (CB),
                  .CC        (CC),
@@ -314,7 +315,8 @@ display_top display(.clk    (clk_i),
         .tck_i      ( 1'b0           ),
         .trstn_i    ( 1'b1           ),
         .tdi_i      ( 1'b0           ),
-        .tdo_o      (                )
+        .tdo_o      (                ),
+        .address    ( dbg_mstaddress )
              );
                           
     axi2mem #(
@@ -334,13 +336,10 @@ display_top display(.clk    (clk_i),
         .data_i ( master0_rdata   )
     );
 
-   assign hid_be = master0_be & 8'hF0 ? master0_be[7:4] : master0_be[3:0];
-   assign hid_we = master0_we ? hid_be : 4'b0;
-   assign hid_wrdata = master0_be & 8'hF0 ? master0_wdata[63:32] : master0_wdata[31:0];
-   assign master0_rdata = {hid_rddata,hid_rddata};
-   assign hid_addr = master0_address[17:0];
-   assign hid_clk = clk_i;
    assign hid_en = master0_req;
-   assign hid_rst = ~rst_ni;
+   assign hid_we = master0_we ? master0_be : 8'b0;
+   assign hid_wrdata = master0_wdata;
+   assign hid_addr = master0_address[17:0];
+   assign master0_rdata = hid_rddata;
 
 endmodule
