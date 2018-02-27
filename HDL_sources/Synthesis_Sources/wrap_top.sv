@@ -222,17 +222,18 @@ module wrap_top
     logic        flush_dcache_ack, flush_dcache;
     logic        flush_dcache_q;
     logic [31:0] dbg_mstaddress;
+    logic [63 : 0] o_data;
     
     AXI_BUS #(
               .AXI_ADDR_WIDTH ( AXI_ADDRESS_WIDTH ),
               .AXI_DATA_WIDTH ( AXI_DATA_WIDTH    ),
               .AXI_ID_WIDTH   ( AXI_ID_WIDTH      ),
               .AXI_USER_WIDTH ( AXI_USER_WIDTH    )
-    ) master0_if();
+    ) master0_if(), master1_if(), dbg0_if(), dbg1_if();
   
 display_top display(.clk    (clk_i),
                  .rst       (!rst_ni),
-                 .bcd_digits(dbg_mstaddress),
+                 .bcd_digits(0 ? dbg_mstaddress : o_data[31:0]),
                  .CA        (CA),
                  .CB        (CB),
                  .CC        (CC),
@@ -291,17 +292,26 @@ display_top display(.clk    (clk_i),
          wire         fetch_enable_i = 1'b1;
          wire         debug_req_i = debug_blocksel_i && debug_req;
 
+   crossbar_socip_test cross1(
+      .slave0_if  ( dbg0_if    ),
+      .slave1_if  ( dbg1_if    ),
+      .master0_if ( master0_if ),
+      .master1_if ( master1_if ),
+      .clk_i      ( clk_i      ),
+      .rst_ni     ( rst_ni     ));
+
    dbg_wrap #(
+      .JTAG_CHAIN_START     ( 1                 ),
       .AXI_ID_MASTER_WIDTH  ( AXI_ID_WIDTH      ),
       .AXI_ID_SLAVE_WIDTH   ( AXI_ID_WIDTH      ),
       .AXI_ADDR_WIDTH       ( AXI_ADDRESS_WIDTH ),
       .AXI_DATA_WIDTH       ( AXI_DATA_WIDTH    ),
       .AXI_USER_WIDTH       ( AXI_USER_WIDTH    )
-    ) i_dbg (
+    ) i_dbg0 (
         .clk        ( clk_i          ),
         .rst_n      ( rst_ni         ),
         .testmode_i ( 1'b0           ),
-        .dbg_master ( master0_if     ),
+        .dbg_master ( dbg0_if     ),
          // CPU signals
         .cpu_addr_o ( debug_addr_i   ), 
         .cpu_data_i ( debug_rdata_o  ),
@@ -319,7 +329,36 @@ display_top display(.clk    (clk_i),
         .address    ( dbg_mstaddress )
              );
                           
-    axi2mem #(
+    dbg_wrap #(
+                .JTAG_CHAIN_START     ( 3                 ),
+                .AXI_ID_MASTER_WIDTH  ( AXI_ID_WIDTH      ),
+                .AXI_ID_SLAVE_WIDTH   ( AXI_ID_WIDTH      ),
+                .AXI_ADDR_WIDTH       ( AXI_ADDRESS_WIDTH ),
+                .AXI_DATA_WIDTH       ( AXI_DATA_WIDTH    ),
+                .AXI_USER_WIDTH       ( AXI_USER_WIDTH    )
+              ) i_dbg1 (
+                  .clk        ( clk_i          ),
+                  .rst_n      ( rst_ni         ),
+                  .testmode_i ( 1'b0           ),
+                  .dbg_master ( dbg1_if     ),
+                   // CPU signals
+                  .cpu_addr_o (                ), 
+                  .cpu_data_i ( 64'b0          ),
+                  .cpu_data_o (                ),
+                  .cpu_bp_i   ( 1'b0           ),
+                  .cpu_stall_o(                ),
+                  .cpu_stb_o  (                ),
+                  .cpu_we_o   (                ),
+                  .cpu_ack_i  ( 1'b0           ),
+                  .tms_i      ( 1'b0           ),
+                  .tck_i      ( 1'b0           ),
+                  .trstn_i    ( 1'b1           ),
+                  .tdi_i      ( 1'b0           ),
+                  .tdo_o      (                ),
+                  .address    (                )
+                       );
+                                    
+   axi2mem #(
         .AXI_ID_WIDTH   ( AXI_ID_WIDTH      ),
         .AXI_ADDR_WIDTH ( AXI_ADDRESS_WIDTH ),
         .AXI_DATA_WIDTH ( AXI_DATA_WIDTH    ),
@@ -341,5 +380,17 @@ display_top display(.clk    (clk_i),
    assign hid_wrdata = master0_wdata;
    assign hid_addr = master0_address[17:0];
    assign master0_rdata = hid_rddata;
+
+   axi_ram_wrap #(
+        .AXI_ID_WIDTH   ( AXI_ID_WIDTH      ),
+        .AXI_ADDR_WIDTH ( AXI_ADDRESS_WIDTH ),
+        .AXI_DATA_WIDTH ( AXI_DATA_WIDTH    ),
+        .AXI_USER_WIDTH ( AXI_USER_WIDTH    )
+    ) i_master1 (
+        .clk_i  ( clk_i           ),
+        .rst_ni ( rst_ni          ),
+        .slave  ( master1_if      ),
+        .o_data ( o_data          )
+    );
 
 endmodule

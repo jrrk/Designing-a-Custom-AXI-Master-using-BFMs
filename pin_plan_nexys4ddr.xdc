@@ -251,7 +251,7 @@ set_property IOSTANDARD LVCMOS33 [get_ports {AN[7]}]
 #set_property PACKAGE_PIN N16 [get_ports redled]
 #set_property IOSTANDARD LVCMOS33 [get_ports redled]
 
+create_clock -period 100.000 -name jtag1/BSCANE2_inst/TCK -waveform {0.000 50.000} [get_pins i_dbg0/jtag1/BSCANE2_inst/TCK]
+create_clock -period 100.000 -name jtag1/BSCANE2_inst/TCK -waveform {0.000 50.000} [get_pins i_dbg1/jtag1/BSCANE2_inst/TCK]
 
-
-create_clock -period 100.000 -name jtag1/BSCANE2_inst/TCK -waveform {0.000 50.000} [get_pins i_dbg/jtag1/BSCANE2_inst/TCK]
 create_clock -period 10.000 -name clk_p -waveform {0.000 5.000} [get_ports clk_p]

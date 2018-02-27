@@ -17,9 +17,10 @@ module dbg_wrap
     parameter AXI_DATA_WIDTH       = 64,
     parameter AXI_ID_MASTER_WIDTH  = 4,
     parameter AXI_ID_SLAVE_WIDTH   = 4,
-    parameter AXI_USER_WIDTH       = 0
-  )
-(
+    parameter AXI_USER_WIDTH       = 0,
+    parameter JTAG_CHAIN_START     = 1
+ )
+    (
     // Clock and Reset
     input logic         clk,
     input logic         rst_n,
@@ -88,6 +89,8 @@ wire [96 : 0] pc_status;
    logic [7:0]  capmem_en;
    logic        burst_en, wrap_rst, capture_rst;
    logic [10:0] unused1;
+   wire   capture_busy = go & busy & !(&capture_address);
+   wire   wrap_en = read_data_valid | write_data_valid;
    
    always @(posedge TCK)
      begin
@@ -116,10 +119,7 @@ wire [96 : 0] pc_status;
          endcase
       end
 
-jtag_dummy jtag1(.*);
-
-   wire   capture_busy = go & busy & !(&capture_address);
-   wire   wrap_en = read_data_valid | write_data_valid;
+jtag_dummy #(.JTAG_CHAIN_START(JTAG_CHAIN_START)) jtag1(.*);
 
    genvar r;
 
@@ -241,7 +241,7 @@ always @(posedge clk)
     end
     
     // Add UUT instance   
-AXI_master #(.DATA_WIDTH(AXI_DATA_WIDTH)) UUT
+AXI_master #(.data_width(AXI_DATA_WIDTH)) UUT
     ( 
     .go(go),                 
     .error(error),           
@@ -261,62 +261,62 @@ AXI_master #(.DATA_WIDTH(AXI_DATA_WIDTH)) UUT
     .current_state_resp(current_state_resp),
     .current_state_wrdata(current_state_wrdata),
     .start_out(start_out),
-    .M_AXI_aclk     ( clk                  ), 
-    .M_AXI_aresetn  ( aresetn              ),     
-    .M_AXI_awvalid  ( dbg_master.aw_valid  ),
-    .M_AXI_awaddr   ( dbg_master.aw_addr   ),
-    .M_AXI_awprot   ( dbg_master.aw_prot   ),
-    .M_AXI_awregion ( dbg_master.aw_region ),
-    .M_AXI_awlen    ( dbg_master.aw_len    ),
-    .M_AXI_awsize   ( dbg_master.aw_size   ),
-    .M_AXI_awburst  ( dbg_master.aw_burst  ),
-    .M_AXI_awlock   ( dbg_master.aw_lock   ),
-    .M_AXI_awcache  ( dbg_master.aw_cache  ),
-    .M_AXI_awqos    ( dbg_master.aw_qos    ),
-    .M_AXI_awid     ( dbg_master.aw_id     ),
-//    .M_AXI_awuser   ( dbg_master.aw_user   ),
-    .M_AXI_awready  ( dbg_master.aw_ready  ),
+    .m_axi_aclk     ( clk                  ), 
+    .m_axi_aresetn  ( aresetn              ),     
+    .m_axi_awvalid  ( dbg_master.aw_valid  ),
+    .m_axi_awaddr   ( dbg_master.aw_addr   ),
+    .m_axi_awprot   ( dbg_master.aw_prot   ),
+    .m_axi_awregion ( dbg_master.aw_region ),
+    .m_axi_awlen    ( dbg_master.aw_len    ),
+    .m_axi_awsize   ( dbg_master.aw_size   ),
+    .m_axi_awburst  ( dbg_master.aw_burst  ),
+    .m_axi_awlock   ( dbg_master.aw_lock   ),
+    .m_axi_awcache  ( dbg_master.aw_cache  ),
+    .m_axi_awqos    ( dbg_master.aw_qos    ),
+    .m_axi_awid     ( dbg_master.aw_id     ),
+//    .m_axi_awuser   ( dbg_master.aw_user   ),
+    .m_axi_awready  ( dbg_master.aw_ready  ),
 
-    .M_AXI_arvalid  ( dbg_master.ar_valid  ),
-    .M_AXI_araddr   ( dbg_master.ar_addr   ),
-    .M_AXI_arprot   ( dbg_master.ar_prot   ),
-    .M_AXI_arregion ( dbg_master.ar_region ),
-    .M_AXI_arlen    ( dbg_master.ar_len    ),
-    .M_AXI_arsize   ( dbg_master.ar_size   ),
-    .M_AXI_arburst  ( dbg_master.ar_burst  ),
-    .M_AXI_arlock   ( dbg_master.ar_lock   ),
-    .M_AXI_arcache  ( dbg_master.ar_cache  ),
-    .M_AXI_arqos    ( dbg_master.ar_qos    ),
-    .M_AXI_arid     ( dbg_master.ar_id     ),
-//    .M_AXI_aruser   ( dbg_master.ar_user   ),
-    .M_AXI_arready  ( dbg_master.ar_ready  ),
+    .m_axi_arvalid  ( dbg_master.ar_valid  ),
+    .m_axi_araddr   ( dbg_master.ar_addr   ),
+    .m_axi_arprot   ( dbg_master.ar_prot   ),
+    .m_axi_arregion ( dbg_master.ar_region ),
+    .m_axi_arlen    ( dbg_master.ar_len    ),
+    .m_axi_arsize   ( dbg_master.ar_size   ),
+    .m_axi_arburst  ( dbg_master.ar_burst  ),
+    .m_axi_arlock   ( dbg_master.ar_lock   ),
+    .m_axi_arcache  ( dbg_master.ar_cache  ),
+    .m_axi_arqos    ( dbg_master.ar_qos    ),
+    .m_axi_arid     ( dbg_master.ar_id     ),
+//    .m_axi_aruser   ( dbg_master.ar_user   ),
+    .m_axi_arready  ( dbg_master.ar_ready  ),
 
-    .M_AXI_wvalid   ( dbg_master.w_valid   ),
-    .M_AXI_wid      (                      ),
-    .M_AXI_wdata    ( dbg_master.w_data    ),
-    .M_AXI_wstrb    ( dbg_master.w_strb    ),
-//    .M_AXI_wuser    ( dbg_master.w_user    ),
-    .M_AXI_wlast    ( dbg_master.w_last    ),
-    .M_AXI_wready   ( dbg_master.w_ready   ),
+    .m_axi_wvalid   ( dbg_master.w_valid   ),
+    .m_axi_wid      (                      ),
+    .m_axi_wdata    ( dbg_master.w_data    ),
+    .m_axi_wstrb    ( dbg_master.w_strb    ),
+//    .m_axi_wuser    ( dbg_master.w_user    ),
+    .m_axi_wlast    ( dbg_master.w_last    ),
+    .m_axi_wready   ( dbg_master.w_ready   ),
 
-    .M_AXI_rvalid   ( dbg_master.r_valid   ),
-    .M_AXI_rdata    ( dbg_master.r_data    ),
-    .M_AXI_rresp    ( dbg_master.r_resp    ),
-    .M_AXI_rlast    ( dbg_master.r_last    ),
-    .M_AXI_rid      ( dbg_master.r_id      ),
-//    .M_AXI_ruser    ( dbg_master.r_user    ),
-    .M_AXI_rready   ( dbg_master.r_ready   ),
+    .m_axi_rvalid   ( dbg_master.r_valid   ),
+    .m_axi_rdata    ( dbg_master.r_data    ),
+    .m_axi_rresp    ( dbg_master.r_resp    ),
+    .m_axi_rlast    ( dbg_master.r_last    ),
+    .m_axi_rid      ( dbg_master.r_id      ),
+//    .m_axi_ruser    ( dbg_master.r_user    ),
+    .m_axi_rready   ( dbg_master.r_ready   ),
 
-    .M_AXI_bvalid   ( dbg_master.b_valid   ),
-    .M_AXI_bresp    ( dbg_master.b_resp    ),
-    .M_AXI_bid      ( dbg_master.b_id      ),
-//    .M_AXI_buser    ( dbg_master.b_user    ),
-    .M_AXI_bready   ( dbg_master.b_ready   )
+    .m_axi_bvalid   ( dbg_master.b_valid   ),
+    .m_axi_bresp    ( dbg_master.b_resp    ),
+    .m_axi_bid      ( dbg_master.b_id      ),
+//    .m_axi_buser    ( dbg_master.b_user    ),
+    .m_axi_bready   ( dbg_master.b_ready   )
     );
     
 assign {dbg_master.aw_user,dbg_master.ar_user,dbg_master.w_user} = 'b0;
     
-`ifdef PROTO_WRAP
+`ifdef PROTO_WRAPPER
    axi_proto_wrap #(
     .ID_WIDTH(AXI_ID_SLAVE_WIDTH),           // id width
     .ADDR_WIDTH(AXI_ADDR_WIDTH),             // address width
@@ -328,7 +328,9 @@ assign {dbg_master.aw_user,dbg_master.ar_user,dbg_master.w_user} = 'b0;
         .pc_status(pc_status),              // output wire [96 : 0] pc_status
         .pc_asserted(pc_asserted),          // output wire pc_asserted
         .proto_if(dbg_master));
-`else
+`endif
+
+`ifdef PROTO_CHECKER
 axi_protocol_checker_0 pc1 (
   .pc_status(pc_status),              // output wire [96 : 0] pc_status
   .pc_asserted(pc_asserted),          // output wire pc_asserted

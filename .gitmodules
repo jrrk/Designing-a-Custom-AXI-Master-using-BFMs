@@ -1,0 +1,3 @@
+[submodule "jtag_vpi"]
+	path = jtag_vpi
+	url = https://github.com/jrrk/jtag_vpi.git
