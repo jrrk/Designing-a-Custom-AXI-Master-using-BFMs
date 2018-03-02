@@ -25,17 +25,21 @@ module dbg_wrap
     input logic         clk,
     input logic         rst_n,
     input  logic        testmode_i,
+    output logic        aresetn,
 
     AXI_BUS.Master      dbg_master,
     // CPU signals
     output logic [15:0] cpu_addr_o, 
-    input  logic [31:0] cpu_data_i, 
-    output logic [31:0] cpu_data_o,
-    input  logic        cpu_bp_i,
-    output logic        cpu_stall_o,
-    output logic        cpu_stb_o,
+    input  logic [AXI_DATA_WIDTH-1:0] cpu_rdata_i, 
+    output logic [AXI_DATA_WIDTH-1:0] cpu_wdata_o,
+    input  logic        cpu_halted_i,
+    output logic        cpu_halt_o,
+    output logic        cpu_req_o,
     output logic        cpu_we_o,
-    input  logic        cpu_ack_i,
+    input  logic        cpu_gnt_i,
+    output logic        cpu_resume_o,
+    input  logic        cpu_rvalid_i,
+    output logic        cpu_fetch_o,
   // JTAG signals
     input  logic        tck_i,
     input  logic        trstn_i,
@@ -46,6 +50,10 @@ module dbg_wrap
   );
 
 
+wire combined_rstn = rst_n && trstn_i;
+logic cpu_nofetch;   
+assign cpu_fetch_o = !cpu_nofetch;
+   
 logic go;   
 wire error;
 logic RNW;  
@@ -54,7 +62,6 @@ wire done;
 logic [7:0] burst_length;        //: in integer range 1 to 256; -- number of beats in a burst
 logic [6:0] burst_size;          //: in integer range 1 to 128;  -- number of byte lanes in each beat
 logic increment_burst;   
-logic aresetn;
 logic [31:0] wrap_address;
 logic [63:0] wrap_wdata, o_data;
 logic [63:0] wrap_rdata;
@@ -87,26 +94,41 @@ wire [96 : 0] pc_status;
    logic [7:0]  sharedmem_en;
    logic [255:0] capmem_dout, capmem_shift;
    logic [7:0]  capmem_en;
-   logic        burst_en, wrap_rst, capture_rst;
+   logic        burst_en, cpu_en, wrap_rst, capture_rst;
    logic [10:0] unused1;
    wire   capture_busy = go & busy & !(&capture_address);
-   wire   wrap_en = read_data_valid | write_data_valid;
+   logic  wrap_en;
    
-   always @(posedge TCK)
-     begin
+   always @(posedge TCK or negedge combined_rstn)
+     if (!combined_rstn)
+       begin
+          {capture_rst, wrap_rst, aresetn, go, increment_burst, RNW, burst_size, burst_length, address} <= 'b0;
+          {cpu_nofetch, cpu_resume_o, cpu_we_o, cpu_req_o, cpu_halt_o, cpu_addr_o, cpu_wdata_o} <= 'b0;
+       end
+     else
+       begin
         if (burst_en)
           begin
              {unused1[10:0],capture_rst, wrap_rst, aresetn, go, increment_burst, RNW, burst_size, burst_length, address} <= TO_MEM;
           end
-     end
+        if (cpu_en)
+          begin
+             if (ADDR[19])
+               {cpu_nofetch, cpu_resume_o, cpu_we_o, cpu_req_o, cpu_halt_o, cpu_addr_o} <= TO_MEM;
+             else
+               cpu_wdata_o <= TO_MEM;
+          end
+       end
    
     always @*
       begin
-         burst_en = 1'b0; sharedmem_en = 8'h0; capmem_en = 8'h0;
+         cpu_en = 1'b0; burst_en = 1'b0; sharedmem_en = 8'h0; wrap_en = 1'b1; capmem_en = 8'h0;
          capmem_shift = capmem_dout >> {ADDR[4:3],6'b0};
          casez(ADDR[23:20])
+           4'hf: begin cpu_en = &ADDR[31:24];
+              FROM_MEM = ADDR[19] ? {cpu_rvalid_i, cpu_halted_i, cpu_gnt_i, cpu_nofetch, cpu_resume_o, cpu_we_o, cpu_req_o, cpu_halt_o, cpu_addr_o} : cpu_rdata_i; end
            4'h9: begin capmem_en = 8'hff; FROM_MEM = capmem_shift[63:0]; end
-           4'h8: begin sharedmem_en = 8'hff; FROM_MEM = sharedmem_dout; end
+           4'h8: begin sharedmem_en = 8'hff; wrap_en = 1'b0; FROM_MEM = sharedmem_dout; end
            4'h7: begin burst_en = 1'b1; FROM_MEM = {11'b0, capture_rst, wrap_rst, aresetn, go,
                                                     increment_burst, RNW, burst_size, burst_length, address}; end
            4'h6: begin FROM_MEM = {4'b0, current_state_wrdata, capture_busy, pc_asserted,
@@ -157,7 +179,7 @@ jtag_dummy #(.JTAG_CHAIN_START(JTAG_CHAIN_START)) jtag1(.*);
         .DOPA   (                          ),
         .ADDRA  ( ADDR[13:5]               ),     // Port A 14-bit Address Input
         .DIA    ( 32'b0                    ),     // Port A 1-bit Data Input
-        .DIPA   ( 1'b0                     ),
+        .DIPA   ( 4'b0                     ),
         .ENA    ( capmem_en[r]             ),     // Port A RAM Enable Input
         .SSRA   ( 1'b0                     ),     // Port A Synchronous Set/Reset Input
         .WEA    ( 1'b0                     ),     // Port A Write Enable Input
@@ -179,7 +201,7 @@ jtag_dummy #(.JTAG_CHAIN_START(JTAG_CHAIN_START)) jtag1(.*);
 always @(posedge clk)
     begin
        if (wrap_rst)
-         wrap_address <= 'b0;
+         wrap_address <= address[13:0];
        else if (write_data_valid || read_data_valid)
          wrap_address <= wrap_address + 8;
        if (capture_rst)

@@ -68,6 +68,13 @@ module wrap_top
    output wire       CG,
    output wire       DP,
    output wire [7:0] AN,
+  
+   // JTAG signals
+   input  logic        tck_i,
+   input  logic        trstn_i,
+   input  logic        tms_i,
+   input  logic        tdi_i,
+   output logic        tdo_o,
 
    // clock and reset
    input wire             clk_p,
@@ -281,16 +288,10 @@ display_top display(.clk    (clk_i),
          logic [63:0]                    debug_wdata_i;
          logic [63:0]                    debug_rdata_o;
          logic                           debug_halted_o;
-         logic        debug_req, debug_fetch_disable;
-         logic        debug_reset;
-         logic        debug_runtest;
-         logic        debug_clk, debug_blocksel_i;
-         logic [1:0]  debug_unused;
+   logic                                 debug_req_i;
          
-         logic [63:0] debug_dout;
         // CPU Control Signals
          wire         fetch_enable_i = 1'b1;
-         wire         debug_req_i = debug_blocksel_i && debug_req;
 
    crossbar_socip_test cross1(
       .slave0_if  ( dbg0_if    ),
@@ -357,8 +358,8 @@ display_top display(.clk    (clk_i),
                   .tdo_o      (                ),
                   .address    (                )
                        );
-                                    
-   axi2mem #(
+
+axi_ram_wrap  #(
         .AXI_ID_WIDTH   ( AXI_ID_WIDTH      ),
         .AXI_ADDR_WIDTH ( AXI_ADDRESS_WIDTH ),
         .AXI_DATA_WIDTH ( AXI_DATA_WIDTH    ),
@@ -367,30 +368,42 @@ display_top display(.clk    (clk_i),
         .clk_i  ( clk_i           ),
         .rst_ni ( rst_ni          ),
         .slave  ( master0_if      ),
-        .req_o  ( master0_req     ),
-        .we_o   ( master0_we      ),
-        .addr_o ( master0_address ),
-        .be_o   ( master0_be      ),
-        .data_o ( master0_wdata   ),
-        .data_i ( master0_rdata   )
-    );
-
-   assign hid_en = master0_req;
-   assign hid_we = master0_we ? master0_be : 8'b0;
-   assign hid_wrdata = master0_wdata;
-   assign hid_addr = master0_address[17:0];
-   assign master0_rdata = hid_rddata;
-
-   axi_ram_wrap #(
-        .AXI_ID_WIDTH   ( AXI_ID_WIDTH      ),
-        .AXI_ADDR_WIDTH ( AXI_ADDRESS_WIDTH ),
-        .AXI_DATA_WIDTH ( AXI_DATA_WIDTH    ),
-        .AXI_USER_WIDTH ( AXI_USER_WIDTH    )
-    ) i_master1 (
+        .bram_en_a  ( master0_req     ),
+        .bram_addr_a ( master0_address ),
+        .bram_we_a   ( master0_we      ),
+        .bram_wrdata_a ( master0_wdata   ),
+        .bram_rddata_a ( master0_rdata   ),
+        .bram_clk_a ( ),
+        .bram_rst_a ( )
+    ), i_master1 (
         .clk_i  ( clk_i           ),
         .rst_ni ( rst_ni          ),
         .slave  ( master1_if      ),
-        .o_data ( o_data          )
+        .bram_en_a  ( master1_req     ),
+        .bram_addr_a ( master1_address ),
+        .bram_we_a   ( master1_we      ),
+        .bram_wrdata_a ( master1_wdata   ),
+        .bram_rddata_a ( master1_rdata   ),
+        .bram_clk_a ( ),
+        .bram_rst_a ( )
+    );
+
+   assign hid_we = master0_we;
+   assign hid_wrdata = master0_we & 8'hF0 ? master0_wdata[63:32] : master0_wdata[31:0];
+   assign master0_rdata = {hid_rddata,hid_rddata};
+   assign hid_addr = master0_address[17:0];
+   assign hid_en = master0_req;
+
+infer_ram  #(
+        .RAM_SIZE(14),
+        .BYTE_WIDTH(8))
+        my_master1_ram (
+      .ram_clk(clk_i),    // input wire clka
+      .ram_en(master1_req),      // input wire ena
+      .ram_we(master1_we),   // input wire [7 : 0] wea
+      .ram_addr(master1_address[16:3]),  // input wire [13: 0] addra
+      .ram_wrdata(master1_wdata),  // input wire [63 : 0] dina
+      .ram_rddata(master1_rdata)  // output wire [63 : 0] douta
     );
 
 endmodule
