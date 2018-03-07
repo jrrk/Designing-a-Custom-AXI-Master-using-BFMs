@@ -292,14 +292,12 @@ display_top display(.clk    (clk_i),
         // CPU Control Signals
          wire         fetch_enable_i = 1'b1;
 
-/*
    crossbar_socip_test cross1(
       .slave0_if  ( dbg0_if    ),
       .master0_if ( master0_if ),
       .master1_if ( master1_if ),
       .clk_i      ( clk_i      ),
       .rst_ni     ( rst_ni     ));
-*/
 
    dbg_wrap #(
       .JTAG_CHAIN_START     ( 1                 ),
@@ -312,7 +310,7 @@ display_top display(.clk    (clk_i),
         .clk        ( clk_i          ),
         .rst_n      ( rst_ni         ),
         .testmode_i ( 1'b0           ),
-        .dbg_master ( master1_if     ),
+        .dbg_master ( dbg0_if        ),
          // CPU signals
         .cpu_addr_o   ( debug_addr_i   ), 
         .cpu_rdata_i  ( debug_rdata_o  ),

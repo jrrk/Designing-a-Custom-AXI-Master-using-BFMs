@@ -57,8 +57,18 @@ module dbg_wrap
 
 wire combined_rstn = rst_n && trstn_i;
 logic cpu_nofetch;   
-assign cpu_fetch_o = !cpu_nofetch;
-   
+logic [15:0] cpu_addr; 
+logic [AXI_DATA_WIDTH-1:0] cpu_rdata; 
+logic [AXI_DATA_WIDTH-1:0] cpu_wdata;
+logic        cpu_halted;
+logic        cpu_halt;
+logic        cpu_req;
+logic        cpu_we;
+logic        cpu_gnt;
+logic        cpu_resume;
+logic        cpu_rvalid;
+logic        cpu_fetch;
+  
 logic go;   
 wire error;
 logic RNW;  
@@ -104,15 +114,17 @@ wire [96 : 0] pc_status;
    
    wire   capture_busy = ((go & busy) || cpu_capture) & !(&capture_address);
    logic  wrap_en;
-   
+
    always @(posedge TCK or negedge combined_rstn)
      if (!combined_rstn)
        begin
           {capture_rst, wrap_rst, aresetn, go, increment_burst, RNW, burst_size, burst_length, address} <= 'b0;
-          {cpu_capture, cpu_nofetch, cpu_resume_o, cpu_we_o, cpu_req_o, cpu_halt_o, cpu_addr_o, cpu_wdata_o} <= 'b0;
+          {cpu_capture, cpu_nofetch, cpu_resume, cpu_we, cpu_req, cpu_halt, cpu_addr, cpu_wdata} <= 'b0;
+          {cpu_rdata, cpu_halted, cpu_gnt, cpu_rvalid} <= 'b0;
        end
      else
        begin
+        {cpu_rdata, cpu_halted, cpu_gnt, cpu_rvalid} <= {cpu_rdata_i, cpu_halted_i, cpu_gnt_i, cpu_rvalid_i};
         if (burst_en)
           begin
              {unused1[10:0],capture_rst, wrap_rst, aresetn, go, increment_burst, RNW, burst_size, burst_length, address} <= TO_MEM;
@@ -120,9 +132,9 @@ wire [96 : 0] pc_status;
         if (cpu_en)
           begin
              if (ADDR[19])
-               {cpu_capture, cpu_nofetch, cpu_resume_o, cpu_we_o, cpu_req_o, cpu_halt_o, cpu_addr_o} <= TO_MEM;
+               {cpu_capture, cpu_nofetch, cpu_resume, cpu_we, cpu_req, cpu_halt, cpu_addr} <= TO_MEM;
              else
-               cpu_wdata_o <= TO_MEM;
+               cpu_wdata <= TO_MEM;
           end
        end
    
@@ -135,7 +147,7 @@ wire [96 : 0] pc_status;
          capmem_shift = capmem_dout >> {ADDR[5:3],6'b0};
          casez(ADDR[23:20])
            4'hf: begin cpu_en = &ADDR[31:24];
-              FROM_MEM = ADDR[19] ? {cpu_rvalid_i, cpu_halted_i, cpu_gnt_i, cpu_capture, cpu_nofetch, cpu_resume_o, cpu_we_o, cpu_req_o, cpu_halt_o, cpu_addr_o} : cpu_rdata_i; end
+              FROM_MEM = ADDR[19] ? {cpu_rvalid, cpu_halted, cpu_gnt, cpu_capture, cpu_nofetch, cpu_resume, cpu_we, cpu_req, cpu_halt, cpu_addr} : cpu_rdata; end
            4'h9: begin capmem_en = 1'b1; FROM_MEM = capmem_shift[63:0]; end
            4'h8: begin sharedmem_en = 8'hff; wrap_en = 1'b0; FROM_MEM = sharedmem_dout; end
            4'h7: begin burst_en = 1'b1; FROM_MEM = {11'b0, capture_rst, wrap_rst, aresetn, go,
@@ -231,6 +243,8 @@ jtag_dummy #(.JTAG_CHAIN_START(JTAG_CHAIN_START)) jtag1(.*);
 
 always @(posedge clk)
     begin
+       {cpu_capture, cpu_fetch_o, cpu_resume_o, cpu_we_o, cpu_req_o, cpu_halt_o, cpu_addr_o, cpu_wdata_o} <=
+            {cpu_capture, ~cpu_nofetch, cpu_resume, cpu_we, cpu_req, cpu_halt, cpu_addr, cpu_wdata};
        if (wrap_rst)
          wrap_address <= address[13:0];
        else
