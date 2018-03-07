@@ -46,7 +46,12 @@ module dbg_wrap
     input  logic        tms_i,
     input  logic        tdi_i,
     output logic        tdo_o,
-    output logic [31:0] address  
+    output logic [63:0] boot_rdata,
+    input  logic [15:0] boot_addr,
+    input logic  [63:0] boot_wdata,
+    input logic         boot_en,
+    input logic  [7:0]  boot_we,
+    output logic [31:0] address    
   );
 
 
@@ -62,18 +67,17 @@ wire done;
 logic [7:0] burst_length;        //: in integer range 1 to 256; -- number of beats in a burst
 logic [6:0] burst_size;          //: in integer range 1 to 128;  -- number of byte lanes in each beat
 logic increment_burst;   
-logic [31:0] wrap_address;
+logic [31:0] wrap_address, next_wrap_address, shared_wrap_address;
 logic [63:0] wrap_wdata, o_data;
 logic [63:0] wrap_rdata;
 logic [8:0] capture_address;
-logic [255:0] capture_wdata;
 logic [63:0] capture_rdata;
 logic [2:0] current_state;
 logic [2:0] current_state_rac;
 logic [2:0] current_state_resp;
 logic [2:0] current_state_wrdata;
 logic [9:0] start_out;
-logic read_data_valid, write_data_valid, pc_asserted;
+logic read_data_valid, write_data_valid, pc_asserted, cpu_capture;
 
 wire [96 : 0] pc_status;
 
@@ -90,20 +94,22 @@ wire [96 : 0] pc_status;
     wire CAPTURE2;
     wire UPDATE;
     wire UPDATE2;
-   logic [63:0] sharedmem_dout;
-   logic [7:0]  sharedmem_en;
-   logic [255:0] capmem_dout, capmem_shift;
-   logic [7:0]  capmem_en;
-   logic        burst_en, cpu_en, wrap_rst, capture_rst;
-   logic [10:0] unused1;
-   wire   capture_busy = go & busy & !(&capture_address);
+   logic [63:0]  sharedmem_dout, bootmem_dout;
+   logic [7:0]   sharedmem_en;
+   logic [511:0] capmem_dout, capmem_shift, capture_wdata;
+   logic [7:0]   bootmem_en;
+   logic         burst_en, cpu_en, wrap_rst, capture_rst;
+   logic [10:0]  unused1;
+   logic         capmem_en;
+   
+   wire   capture_busy = ((go & busy) || cpu_capture) & !(&capture_address);
    logic  wrap_en;
    
    always @(posedge TCK or negedge combined_rstn)
      if (!combined_rstn)
        begin
           {capture_rst, wrap_rst, aresetn, go, increment_burst, RNW, burst_size, burst_length, address} <= 'b0;
-          {cpu_nofetch, cpu_resume_o, cpu_we_o, cpu_req_o, cpu_halt_o, cpu_addr_o, cpu_wdata_o} <= 'b0;
+          {cpu_capture, cpu_nofetch, cpu_resume_o, cpu_we_o, cpu_req_o, cpu_halt_o, cpu_addr_o, cpu_wdata_o} <= 'b0;
        end
      else
        begin
@@ -114,7 +120,7 @@ wire [96 : 0] pc_status;
         if (cpu_en)
           begin
              if (ADDR[19])
-               {cpu_nofetch, cpu_resume_o, cpu_we_o, cpu_req_o, cpu_halt_o, cpu_addr_o} <= TO_MEM;
+               {cpu_capture, cpu_nofetch, cpu_resume_o, cpu_we_o, cpu_req_o, cpu_halt_o, cpu_addr_o} <= TO_MEM;
              else
                cpu_wdata_o <= TO_MEM;
           end
@@ -122,12 +128,15 @@ wire [96 : 0] pc_status;
    
     always @*
       begin
-         cpu_en = 1'b0; burst_en = 1'b0; sharedmem_en = 8'h0; wrap_en = 1'b1; capmem_en = 8'h0;
-         capmem_shift = capmem_dout >> {ADDR[4:3],6'b0};
+         wrap_en = write_data_valid || read_data_valid;
+         next_wrap_address = wrap_address + {wrap_en,3'b000};
+         shared_wrap_address = write_data_valid ? next_wrap_address : wrap_address;
+         cpu_en = 1'b0; burst_en = 1'b0; sharedmem_en = 8'h0; wrap_en = 1'b1; capmem_en = 1'b0; bootmem_en = 8'b0;
+         capmem_shift = capmem_dout >> {ADDR[5:3],6'b0};
          casez(ADDR[23:20])
            4'hf: begin cpu_en = &ADDR[31:24];
-              FROM_MEM = ADDR[19] ? {cpu_rvalid_i, cpu_halted_i, cpu_gnt_i, cpu_nofetch, cpu_resume_o, cpu_we_o, cpu_req_o, cpu_halt_o, cpu_addr_o} : cpu_rdata_i; end
-           4'h9: begin capmem_en = 8'hff; FROM_MEM = capmem_shift[63:0]; end
+              FROM_MEM = ADDR[19] ? {cpu_rvalid_i, cpu_halted_i, cpu_gnt_i, cpu_capture, cpu_nofetch, cpu_resume_o, cpu_we_o, cpu_req_o, cpu_halt_o, cpu_addr_o} : cpu_rdata_i; end
+           4'h9: begin capmem_en = 1'b1; FROM_MEM = capmem_shift[63:0]; end
            4'h8: begin sharedmem_en = 8'hff; wrap_en = 1'b0; FROM_MEM = sharedmem_dout; end
            4'h7: begin burst_en = 1'b1; FROM_MEM = {11'b0, capture_rst, wrap_rst, aresetn, go,
                                                     increment_burst, RNW, burst_size, burst_length, address}; end
@@ -137,6 +146,7 @@ wire [96 : 0] pc_status;
            4'h5: begin FROM_MEM = {31'b0, pc_status[96:64]}; end
            4'h4: begin FROM_MEM = pc_status[63:0]; end
            4'h3: begin FROM_MEM = {55'b0, capture_address}; end
+           4'h2: begin bootmem_en = ADDR[31:24]; FROM_MEM = bootmem_dout; end
            default: FROM_MEM = 64'hDEADBEEF;
          endcase
       end
@@ -144,6 +154,27 @@ wire [96 : 0] pc_status;
 jtag_dummy #(.JTAG_CHAIN_START(JTAG_CHAIN_START)) jtag1(.*);
 
    genvar r;
+
+   generate for (r = 0; r < 32; r=r+1)
+     RAMB16_S2_S2
+     RAMB16_S2_S2_inst
+       (
+        .CLKA   ( TCK                      ),     // Port A Clock
+        .DOA    ( bootmem_dout[r*2 +: 2]   ),     // Port A 1-bit Data Output
+        .ADDRA  ( ADDR[15:3]               ),     // Port A 14-bit Address Input
+        .DIA    ( TO_MEM[r*2 +:2]          ),     // Port A 1-bit Data Input
+        .ENA    ( bootmem_en[r/4]          ),     // Port A RAM Enable Input
+        .SSRA   ( 1'b0                     ),     // Port A Synchronous Set/Reset Input
+        .WEA    ( WREN                     ),     // Port A Write Enable Input
+        .CLKB   ( clk                      ),     // Port B Clock
+        .DOB    ( boot_rdata[r*2 +: 2]     ),     // Port B 1-bit Data Output
+        .ADDRB  ( boot_addr[15:3]          ),     // Port B 14-bit Address Input
+        .DIB    ( boot_wdata[r*2 +: 2]     ),     // Port B 1-bit Data Input
+        .ENB    ( boot_en                  ),     // Port B RAM Enable Input
+        .SSRB   ( 1'b0                     ),     // Port B Synchronous Set/Reset Input
+        .WEB    ( boot_we[r/4]             )      // Port B Write Enable Input
+        );
+   endgenerate
 
    generate for (r = 0; r < 8; r=r+1)
      RAMB16_S9_S9
@@ -161,7 +192,7 @@ jtag_dummy #(.JTAG_CHAIN_START(JTAG_CHAIN_START)) jtag1(.*);
         .CLKB   ( clk                      ),     // Port B Clock
         .DOB    ( wrap_rdata[r*8 +: 8]     ),     // Port B 1-bit Data Output
         .DOPB   (                          ),
-        .ADDRB  ( wrap_address[13:3]       ),     // Port B 14-bit Address Input
+        .ADDRB  ( shared_wrap_address[13:3] ),     // Port B 14-bit Address Input
         .DIB    ( wrap_wdata[r*8 +: 8]     ),     // Port B 1-bit Data Input
         .DIPB   ( 1'b0                     ),
         .ENB    ( wrap_en                  ),     // Port B RAM Enable Input
@@ -170,17 +201,17 @@ jtag_dummy #(.JTAG_CHAIN_START(JTAG_CHAIN_START)) jtag1(.*);
         );
    endgenerate
 
-   generate for (r = 0; r < 8; r=r+1)
+   generate for (r = 0; r < 16; r=r+1)
      RAMB16_S36_S36
      RAMB16_S36_S36_inst
        (
         .CLKA   ( TCK                      ),     // Port A Clock
         .DOA    ( capmem_dout[r*32 +: 32]  ),     // Port A 1-bit Data Output
         .DOPA   (                          ),
-        .ADDRA  ( ADDR[13:5]               ),     // Port A 14-bit Address Input
+        .ADDRA  ( ADDR[14:6]               ),     // Port A 14-bit Address Input
         .DIA    ( 32'b0                    ),     // Port A 1-bit Data Input
         .DIPA   ( 4'b0                     ),
-        .ENA    ( capmem_en[r]             ),     // Port A RAM Enable Input
+        .ENA    ( capmem_en                ),     // Port A RAM Enable Input
         .SSRA   ( 1'b0                     ),     // Port A Synchronous Set/Reset Input
         .WEA    ( 1'b0                     ),     // Port A Write Enable Input
         .CLKB   ( clk                      ),     // Port B Clock
@@ -189,7 +220,7 @@ jtag_dummy #(.JTAG_CHAIN_START(JTAG_CHAIN_START)) jtag1(.*);
         .ADDRB  ( capture_address          ),     // Port B 14-bit Address Input
         .DIB    ( capture_wdata[r*32 +: 32]),     // Port B 1-bit Data Input
         .DIPB   ( 4'b0                     ),
-        .ENB    ( 1'b1                     ),     // Port B RAM Enable Input
+        .ENB    ( capture_busy             ),     // Port B RAM Enable Input
         .SSRB   ( 1'b0                     ),     // Port B Synchronous Set/Reset Input
         .WEB    ( capture_busy             )      // Port B Write Enable Input
         );
@@ -202,19 +233,28 @@ always @(posedge clk)
     begin
        if (wrap_rst)
          wrap_address <= address[13:0];
-       else if (write_data_valid || read_data_valid)
-         wrap_address <= wrap_address + 8;
+       else
+         wrap_address <= next_wrap_address;
        if (capture_rst)
          capture_address <= 'b0;
        else if (capture_busy)
          capture_address <= capture_address + 9'b1;
        capture_wdata <= {
- 1'b0,
+ wrap_rdata,
+ wrap_en,
+ wrap_address[13:0],
+ read_data_valid,
+ write_data_valid,
+ boot_rdata,
+ boot_addr,
+ boot_wdata,
+ boot_en,
+ boot_we,
+ capture_address[8:0],
  current_state_resp,                         
  current_state,                         
  current_state_wrdata,                         
- capture_address[5:0],
- 1'b0,
+ current_state_rac,
  start_out,                      
  done,
  busy,
@@ -254,8 +294,8 @@ always @(posedge clk)
  dbg_master.b_resp    ,
  dbg_master.b_id      ,
  dbg_master.b_ready   ,
- dbg_w_data32[31:0]   ,
- dbg_r_data32[31:0]   ,
+ dbg_master.w_data    ,
+ dbg_master.r_data    ,
  dbg_master.aw_addr   ,
  dbg_master.ar_addr   
   };

@@ -236,11 +236,11 @@ module wrap_top
               .AXI_DATA_WIDTH ( AXI_DATA_WIDTH    ),
               .AXI_ID_WIDTH   ( AXI_ID_WIDTH      ),
               .AXI_USER_WIDTH ( AXI_USER_WIDTH    )
-    ) master0_if(), master1_if(), dbg0_if(), dbg1_if();
+    ) master0_if(), master1_if(), dbg0_if();
   
 display_top display(.clk    (clk_i),
                  .rst       (!rst_ni),
-                 .bcd_digits(0 ? dbg_mstaddress : o_data[31:0]),
+                 .bcd_digits(dbg_mstaddress),
                  .CA        (CA),
                  .CB        (CB),
                  .CC        (CC),
@@ -273,8 +273,7 @@ display_top display(.clk    (clk_i),
 
     logic        master0_req,     master1_req,     master3_req;
     logic [63:0] master0_address, master1_address, master3_address;
-    logic        master0_we,      master1_we,      master3_we;
-    logic [7:0]  master0_be,      master1_be,      master3_be;
+    logic [7:0]  master0_we,      master1_we,      master3_we;
     logic [63:0] master0_wdata,   master1_wdata,   master3_wdata;
     logic [63:0] master0_rdata,   master1_rdata,   master3_rdata;
 
@@ -293,13 +292,14 @@ display_top display(.clk    (clk_i),
         // CPU Control Signals
          wire         fetch_enable_i = 1'b1;
 
+/*
    crossbar_socip_test cross1(
       .slave0_if  ( dbg0_if    ),
-      .slave1_if  ( dbg1_if    ),
       .master0_if ( master0_if ),
       .master1_if ( master1_if ),
       .clk_i      ( clk_i      ),
       .rst_ni     ( rst_ni     ));
+*/
 
    dbg_wrap #(
       .JTAG_CHAIN_START     ( 1                 ),
@@ -312,58 +312,39 @@ display_top display(.clk    (clk_i),
         .clk        ( clk_i          ),
         .rst_n      ( rst_ni         ),
         .testmode_i ( 1'b0           ),
-        .dbg_master ( dbg0_if     ),
+        .dbg_master ( master1_if     ),
          // CPU signals
-        .cpu_addr_o ( debug_addr_i   ), 
-        .cpu_data_i ( debug_rdata_o  ),
-        .cpu_data_o ( debug_wdata_i  ),
-        .cpu_bp_i   ( debug_halted_o ),
-        .cpu_stall_o( debug_halt_i   ),
-        .cpu_stb_o  ( debug_req_i    ),
-        .cpu_we_o   ( debug_we_i     ),
-        .cpu_ack_i  ( debug_rvalid_o ),
+        .cpu_addr_o   ( debug_addr_i   ), 
+        .cpu_rdata_i  ( debug_rdata_o  ),
+        .cpu_wdata_o  ( debug_wdata_i  ),
+        .cpu_halted_i ( debug_halted_o ),
+        .cpu_halt_o   ( debug_halt_i   ),
+        .cpu_resume_o ( debug_resume_i ),
+        .cpu_req_o    ( debug_req_i    ),
+        .cpu_we_o     ( debug_we_i     ),
+        .cpu_rvalid_i ( debug_rvalid_o ),
+        .cpu_gnt_i    ( debug_gnt_o    ),
+        .cpu_fetch_o  ( fetch_enable_i ),
+        // Boot memory at location 'h40000000
+        .boot_en(master1_req),      // input wire ena
+        .boot_we(master1_we),   // input wire [7 : 0] wea
+        .boot_addr(master1_address[15:0]),  // input wire [13: 0] addra
+        .boot_wdata(master1_wdata),  // input wire [63 : 0] dina
+        .boot_rdata(master1_rdata),  // output wire [63 : 0] douta
+        .address    ( dbg_mstaddress ),
         .tms_i      ( 1'b0           ),
         .tck_i      ( 1'b0           ),
         .trstn_i    ( 1'b1           ),
         .tdi_i      ( 1'b0           ),
-        .tdo_o      (                ),
-        .address    ( dbg_mstaddress )
+        .tdo_o      (                )
              );
                           
-    dbg_wrap #(
-                .JTAG_CHAIN_START     ( 3                 ),
-                .AXI_ID_MASTER_WIDTH  ( AXI_ID_WIDTH      ),
-                .AXI_ID_SLAVE_WIDTH   ( AXI_ID_WIDTH      ),
-                .AXI_ADDR_WIDTH       ( AXI_ADDRESS_WIDTH ),
-                .AXI_DATA_WIDTH       ( AXI_DATA_WIDTH    ),
-                .AXI_USER_WIDTH       ( AXI_USER_WIDTH    )
-              ) i_dbg1 (
-                  .clk        ( clk_i          ),
-                  .rst_n      ( rst_ni         ),
-                  .testmode_i ( 1'b0           ),
-                  .dbg_master ( dbg1_if     ),
-                   // CPU signals
-                  .cpu_addr_o (                ), 
-                  .cpu_data_i ( 64'b0          ),
-                  .cpu_data_o (                ),
-                  .cpu_bp_i   ( 1'b0           ),
-                  .cpu_stall_o(                ),
-                  .cpu_stb_o  (                ),
-                  .cpu_we_o   (                ),
-                  .cpu_ack_i  ( 1'b0           ),
-                  .tms_i      ( 1'b0           ),
-                  .tck_i      ( 1'b0           ),
-                  .trstn_i    ( 1'b1           ),
-                  .tdi_i      ( 1'b0           ),
-                  .tdo_o      (                ),
-                  .address    (                )
-                       );
-
 axi_ram_wrap  #(
         .AXI_ID_WIDTH   ( AXI_ID_WIDTH      ),
         .AXI_ADDR_WIDTH ( AXI_ADDRESS_WIDTH ),
         .AXI_DATA_WIDTH ( AXI_DATA_WIDTH    ),
-        .AXI_USER_WIDTH ( AXI_USER_WIDTH    )
+        .AXI_USER_WIDTH ( AXI_USER_WIDTH    ),
+        .MEM_ADDR_WIDTH ( 20                )
     ) i_master0 (
         .clk_i  ( clk_i           ),
         .rst_ni ( rst_ni          ),
@@ -389,21 +370,9 @@ axi_ram_wrap  #(
     );
 
    assign hid_we = master0_we;
-   assign hid_wrdata = master0_we & 8'hF0 ? master0_wdata[63:32] : master0_wdata[31:0];
-   assign master0_rdata = {hid_rddata,hid_rddata};
+   assign hid_wrdata = master0_wdata;
+   assign master0_rdata = hid_rddata;
    assign hid_addr = master0_address[17:0];
    assign hid_en = master0_req;
-
-infer_ram  #(
-        .RAM_SIZE(14),
-        .BYTE_WIDTH(8))
-        my_master1_ram (
-      .ram_clk(clk_i),    // input wire clka
-      .ram_en(master1_req),      // input wire ena
-      .ram_we(master1_we),   // input wire [7 : 0] wea
-      .ram_addr(master1_address[16:3]),  // input wire [13: 0] addra
-      .ram_wrdata(master1_wdata),  // input wire [63 : 0] dina
-      .ram_rddata(master1_rdata)  // output wire [63 : 0] douta
-    );
 
 endmodule
