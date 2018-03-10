@@ -51,6 +51,11 @@ module dbg_wrap
     input logic  [63:0] boot_wdata,
     input logic         boot_en,
     input logic  [7:0]  boot_we,
+    output logic [63:0] wrap_rdata,
+    input  logic [13:0] wrap_addr,
+    input logic  [63:0] wrap_wdata,
+    input logic         wrap_en,
+    input logic  [7:0]  wrap_we,
     output logic [31:0] address    
   );
 
@@ -77,9 +82,6 @@ wire done;
 logic [7:0] burst_length;        //: in integer range 1 to 256; -- number of beats in a burst
 logic [6:0] burst_size;          //: in integer range 1 to 128;  -- number of byte lanes in each beat
 logic increment_burst;   
-logic [31:0] wrap_address, next_wrap_address, shared_wrap_address;
-logic [63:0] wrap_wdata, o_data;
-logic [63:0] wrap_rdata;
 logic [8:0] capture_address;
 logic [63:0] capture_rdata;
 logic [2:0] current_state;
@@ -108,26 +110,38 @@ wire [96 : 0] pc_status;
    logic [7:0]   sharedmem_en;
    logic [511:0] capmem_dout, capmem_shift, capture_wdata;
    logic [7:0]   bootmem_en;
-   logic         burst_en, cpu_en, wrap_rst, capture_rst;
+   logic         burst_en, cpu_en, capture_rst;
    logic [10:0]  unused1;
    logic         capmem_en;
+   logic                          dma_req;
+   logic                          dma_gnt;
+   logic                          dma_rvalid;
+   logic                          dma_capture;
+   logic                          dma_introut;
+   logic [31:0]                   dma_addr;
+   logic                          dma_we;
+   logic [3:0]                    dma_be;
+   logic [31:0]                   dma_rdata;
+   logic [31:0]                   dma_wdata;
+   logic [31:0]                   dma_tvect;
    
-   wire   capture_busy = ((go & busy) || cpu_capture) & !(&capture_address);
-   logic  wrap_en;
+   wire   capture_busy = (dma_capture || cpu_capture) & !(&capture_address);
+   logic  dma_en, wrap_rst_notused;
 
-   always @(posedge TCK or negedge combined_rstn)
+   always @(posedge TCK)
      if (!combined_rstn)
        begin
-          {capture_rst, wrap_rst, aresetn, go, increment_burst, RNW, burst_size, burst_length, address} <= 'b0;
+          {capture_rst, wrap_rst_notused, aresetn, go, increment_burst, RNW, burst_size, burst_length, address} <= 'b0;
           {cpu_capture, cpu_nofetch, cpu_resume, cpu_we, cpu_req, cpu_halt, cpu_addr, cpu_wdata} <= 'b0;
           {cpu_rdata, cpu_halted, cpu_gnt, cpu_rvalid} <= 'b0;
+          {dma_req, dma_we, dma_be, dma_wdata, dma_addr} <= 'b0; 
        end
      else
        begin
         {cpu_rdata, cpu_halted, cpu_gnt, cpu_rvalid} <= {cpu_rdata_i, cpu_halted_i, cpu_gnt_i, cpu_rvalid_i};
         if (burst_en)
           begin
-             {unused1[10:0],capture_rst, wrap_rst, aresetn, go, increment_burst, RNW, burst_size, burst_length, address} <= TO_MEM;
+             {unused1[10:0],capture_rst, wrap_rst_notused, aresetn, go, increment_burst, RNW, burst_size, burst_length, address} <= TO_MEM;
           end
         if (cpu_en)
           begin
@@ -136,25 +150,31 @@ wire [96 : 0] pc_status;
              else
                cpu_wdata <= TO_MEM;
           end
+        if (dma_en)
+          begin
+             if (ADDR[19])
+               {dma_rvalid, dma_gnt, dma_capture, dma_req, dma_we, dma_be[3:0], dma_addr} <= TO_MEM;
+             else
+               dma_wdata <= TO_MEM;
+          end
        end
    
     always @*
       begin
-         wrap_en = write_data_valid || read_data_valid;
-         next_wrap_address = wrap_address + {wrap_en,3'b000};
-         shared_wrap_address = write_data_valid ? next_wrap_address : wrap_address;
-         cpu_en = 1'b0; burst_en = 1'b0; sharedmem_en = 8'h0; wrap_en = 1'b1; capmem_en = 1'b0; bootmem_en = 8'b0;
+         cpu_en = 1'b0; burst_en = 1'b0; dma_en = 1'b0;
+         sharedmem_en = 8'h0; capmem_en = 1'b0; bootmem_en = 8'b0;
          capmem_shift = capmem_dout >> {ADDR[5:3],6'b0};
          casez(ADDR[23:20])
            4'hf: begin cpu_en = &ADDR[31:24];
               FROM_MEM = ADDR[19] ? {cpu_rvalid, cpu_halted, cpu_gnt, cpu_capture, cpu_nofetch, cpu_resume, cpu_we, cpu_req, cpu_halt, cpu_addr} : cpu_rdata; end
            4'h9: begin capmem_en = 1'b1; FROM_MEM = capmem_shift[63:0]; end
-           4'h8: begin sharedmem_en = 8'hff; wrap_en = 1'b0; FROM_MEM = sharedmem_dout; end
-           4'h7: begin burst_en = 1'b1; FROM_MEM = {11'b0, capture_rst, wrap_rst, aresetn, go,
+           4'h8: begin sharedmem_en = 8'hff; FROM_MEM = sharedmem_dout; end
+           4'h7: begin burst_en = 1'b1; FROM_MEM = {11'b0, capture_rst, wrap_rst_notused, aresetn, go,
                                                     increment_burst, RNW, burst_size, burst_length, address}; end
-           4'h6: begin FROM_MEM = {4'b0, current_state_wrdata, capture_busy, pc_asserted,
-                                   current_state_resp, current_state_rac, start_out, aresetn,
-                                   error, busy, done, current_state, wrap_address}; end
+           4'h6: begin dma_en = 1'b1; 
+              FROM_MEM = ADDR[19] ? {dma_capture, dma_req, dma_we, dma_be, dma_addr} : ADDR[18] ?
+                         {dma_introut, dma_tvect} : dma_rdata; end
+              
            4'h5: begin FROM_MEM = {31'b0, pc_status[96:64]}; end
            4'h4: begin FROM_MEM = pc_status[63:0]; end
            4'h3: begin FROM_MEM = {55'b0, capture_address}; end
@@ -204,12 +224,12 @@ jtag_dummy #(.JTAG_CHAIN_START(JTAG_CHAIN_START)) jtag1(.*);
         .CLKB   ( clk                      ),     // Port B Clock
         .DOB    ( wrap_rdata[r*8 +: 8]     ),     // Port B 1-bit Data Output
         .DOPB   (                          ),
-        .ADDRB  ( shared_wrap_address[13:3] ),     // Port B 14-bit Address Input
+        .ADDRB  ( wrap_addr[13:3]          ),     // Port B 14-bit Address Input
         .DIB    ( wrap_wdata[r*8 +: 8]     ),     // Port B 1-bit Data Input
         .DIPB   ( 1'b0                     ),
         .ENB    ( wrap_en                  ),     // Port B RAM Enable Input
         .SSRB   ( 1'b0                     ),     // Port B Synchronous Set/Reset Input
-        .WEB    ( read_data_valid          )      // Port B Write Enable Input
+        .WEB    ( wrap_we[r]               )      // Port B Write Enable Input
         );
    endgenerate
 
@@ -245,10 +265,6 @@ always @(posedge clk)
     begin
        {cpu_capture, cpu_fetch_o, cpu_resume_o, cpu_we_o, cpu_req_o, cpu_halt_o, cpu_addr_o, cpu_wdata_o} <=
             {cpu_capture, ~cpu_nofetch, cpu_resume, cpu_we, cpu_req, cpu_halt, cpu_addr, cpu_wdata};
-       if (wrap_rst)
-         wrap_address <= address[13:0];
-       else
-         wrap_address <= next_wrap_address;
        if (capture_rst)
          capture_address <= 'b0;
        else if (capture_busy)
@@ -256,7 +272,7 @@ always @(posedge clk)
        capture_wdata <= {
  wrap_rdata,
  wrap_en,
- wrap_address[13:0],
+ wrap_addr[13:0],
  read_data_valid,
  write_data_valid,
  boot_rdata,
@@ -315,81 +331,217 @@ always @(posedge clk)
   };
        
     end
-    
-    // Add UUT instance   
-AXI_master #(.data_width(AXI_DATA_WIDTH)) UUT
-    ( 
-    .go(go),                 
-    .error(error),           
-    .RNW(RNW),               
-    .busy(busy),             
-    .done(done),             
-    .address(address),       
-    .write_data(wrap_rdata), 
-    .read_data(wrap_wdata),   
-    .burst_length(burst_length),     
-    .burst_size(burst_size),         
-    .increment_burst(increment_burst),
-    .read_data_valid(read_data_valid),
-    .write_data_valid(write_data_valid),
-    .current_state_out(current_state),
-    .current_state_rac(current_state_rac),
-    .current_state_resp(current_state_resp),
-    .current_state_wrdata(current_state_wrdata),
-    .start_out(start_out),
-    .m_axi_aclk     ( clk                  ), 
-    .m_axi_aresetn  ( aresetn              ),     
-    .m_axi_awvalid  ( dbg_master.aw_valid  ),
-    .m_axi_awaddr   ( dbg_master.aw_addr   ),
-    .m_axi_awprot   ( dbg_master.aw_prot   ),
-    .m_axi_awregion ( dbg_master.aw_region ),
-    .m_axi_awlen    ( dbg_master.aw_len    ),
-    .m_axi_awsize   ( dbg_master.aw_size   ),
-    .m_axi_awburst  ( dbg_master.aw_burst  ),
-    .m_axi_awlock   ( dbg_master.aw_lock   ),
-    .m_axi_awcache  ( dbg_master.aw_cache  ),
-    .m_axi_awqos    ( dbg_master.aw_qos    ),
-    .m_axi_awid     ( dbg_master.aw_id     ),
-//    .m_axi_awuser   ( dbg_master.aw_user   ),
-    .m_axi_awready  ( dbg_master.aw_ready  ),
 
-    .m_axi_arvalid  ( dbg_master.ar_valid  ),
-    .m_axi_araddr   ( dbg_master.ar_addr   ),
-    .m_axi_arprot   ( dbg_master.ar_prot   ),
-    .m_axi_arregion ( dbg_master.ar_region ),
-    .m_axi_arlen    ( dbg_master.ar_len    ),
-    .m_axi_arsize   ( dbg_master.ar_size   ),
-    .m_axi_arburst  ( dbg_master.ar_burst  ),
-    .m_axi_arlock   ( dbg_master.ar_lock   ),
-    .m_axi_arcache  ( dbg_master.ar_cache  ),
-    .m_axi_arqos    ( dbg_master.ar_qos    ),
-    .m_axi_arid     ( dbg_master.ar_id     ),
-//    .m_axi_aruser   ( dbg_master.ar_user   ),
-    .m_axi_arready  ( dbg_master.ar_ready  ),
+    // ---------------------------------------------------------
+    // AXI TARG Port Declarations ------------------------------
+    // ---------------------------------------------------------
+    //AXI write address bus -------------- // USED// -----------
+    logic [AXI_ID_MASTER_WIDTH-1:0]      aw_id;
+    logic [AXI_ADDR_WIDTH-1:0]     aw_addr;
+    logic [ 7:0]                   aw_len;
+    logic [ 2:0]                   aw_size;
+    logic [ 1:0]                   aw_burst;
+    logic                          aw_lock;
+    logic [ 3:0]                   aw_cache;
+    logic [ 2:0]                   aw_prot;
+    logic [ 3:0]                   aw_region;
+    logic [AXI_USER_WIDTH-1:0]     aw_user;
+    logic [ 3:0]                   aw_qos;
+    logic                          aw_valid;
+    logic                          aw_ready;
+    // ---------------------------------------------------------
 
-    .m_axi_wvalid   ( dbg_master.w_valid   ),
-    .m_axi_wid      (                      ),
-    .m_axi_wdata    ( dbg_master.w_data    ),
-    .m_axi_wstrb    ( dbg_master.w_strb    ),
-//    .m_axi_wuser    ( dbg_master.w_user    ),
-    .m_axi_wlast    ( dbg_master.w_last    ),
-    .m_axi_wready   ( dbg_master.w_ready   ),
+    //AXI write data bus -------------- // USED// --------------
+    logic [AXI_DATA_WIDTH-1:0]     w_data;
+    logic [AXI_DATA_WIDTH/8-1:0]   w_strb;
+    logic                          w_last;
+    logic [AXI_USER_WIDTH-1:0]     w_user;
+    logic                          w_valid;
+    logic                          w_ready;
+    // ---------------------------------------------------------
 
-    .m_axi_rvalid   ( dbg_master.r_valid   ),
-    .m_axi_rdata    ( dbg_master.r_data    ),
-    .m_axi_rresp    ( dbg_master.r_resp    ),
-    .m_axi_rlast    ( dbg_master.r_last    ),
-    .m_axi_rid      ( dbg_master.r_id      ),
-//    .m_axi_ruser    ( dbg_master.r_user    ),
-    .m_axi_rready   ( dbg_master.r_ready   ),
+    //AXI write response bus -------------- // USED// ----------
+    logic   [AXI_ID_MASTER_WIDTH-1:0]    b_id;
+    logic   [ 1:0]                 b_resp;
+    logic                          b_valid;
+    logic   [AXI_USER_WIDTH-1:0]   b_user;
+    logic                          b_ready;
+    // ---------------------------------------------------------
 
-    .m_axi_bvalid   ( dbg_master.b_valid   ),
-    .m_axi_bresp    ( dbg_master.b_resp    ),
-    .m_axi_bid      ( dbg_master.b_id      ),
-//    .m_axi_buser    ( dbg_master.b_user    ),
-    .m_axi_bready   ( dbg_master.b_ready   )
-    );
-    
+    //AXI read address bus -------------------------------------
+    logic [AXI_ID_MASTER_WIDTH-1:0]      ar_id;
+    logic [AXI_ADDR_WIDTH-1:0] ar_addr;
+    logic [ 7:0]                   ar_len;
+    logic [ 2:0]                   ar_size;
+    logic [ 1:0]                   ar_burst;
+    logic                          ar_lock;
+    logic [ 3:0]                   ar_cache;
+    logic [ 2:0]                   ar_prot;
+    logic [ 3:0]                   ar_region;
+    logic [AXI_USER_WIDTH-1:0]     ar_user;
+    logic [ 3:0]                   ar_qos;
+    logic                          ar_valid;
+    logic                          ar_ready;
+    // ---------------------------------------------------------
+
+    //AXI read data bus ----------------------------------------
+    logic [AXI_ID_MASTER_WIDTH-1:0]     r_id;
+    logic [AXI_DATA_WIDTH-1:0]    r_data;
+    logic [ 1:0]                  r_resp;
+    logic                         r_last;
+    logic [AXI_USER_WIDTH-1:0]    r_user;
+    logic                         r_valid;
+    logic                         r_ready;
+
+core2axi dma_if(
+.clk_i(clk),
+.rst_ni(aresetn),
+
+.data_req_i(dma_req),
+.data_gnt_o(dma_gnt),
+.data_rvalid_o(dma_rvalid),
+.data_addr_i(dma_addr),
+.data_we_i(dma_we),
+.data_be_i(dma_be),
+.data_rdata_o(dma_rdata),
+.data_wdata_i(dma_wdata),
+
+    // ---------------------------------------------------------
+    // AXI TARG Port Declarations ------------------------------
+    // ---------------------------------------------------------
+    //AXI write address bus -------------- // USED// -----------
+.aw_id_o(aw_id),
+.aw_addr_o(aw_addr),
+.aw_len_o(aw_len),
+.aw_size_o(aw_size),
+.aw_burst_o(aw_burst),
+.aw_lock_o(aw_lock),
+.aw_cache_o(aw_cache),
+.aw_prot_o(aw_prot),
+.aw_region_o(aw_region),
+.aw_user_o(aw_user),
+.aw_qos_o(aw_qos),
+.aw_valid_o(aw_valid),
+.aw_ready_i(aw_ready),
+    // ---------------------------------------------------------
+
+    //AXI write data bus -------------- // USED// --------------
+.w_data_o(w_data),
+.w_strb_o(w_strb),
+.w_last_o(w_last),
+.w_user_o(w_user),
+.w_valid_o(w_valid),
+.w_ready_i(w_ready),
+    // ---------------------------------------------------------
+
+    //AXI write response bus -------------- // USED// ----------
+.b_id_i(b_id),
+.b_resp_i(b_resp),
+.b_valid_i(b_valid),
+.b_user_i(b_user),
+.b_ready_o(b_ready),
+    // ---------------------------------------------------------
+
+    //AXI read address bus -------------------------------------
+.ar_id_o(ar_id),
+.ar_addr_o(ar_addr),
+.ar_len_o(ar_len),
+.ar_size_o(ar_size),
+.ar_burst_o(ar_burst),
+.ar_lock_o(ar_lock),
+.ar_cache_o(ar_cache),
+.ar_prot_o(ar_prot),
+.ar_region_o(ar_region),
+.ar_user_o(ar_user),
+.ar_qos_o(ar_qos),
+.ar_valid_o(ar_valid),
+.ar_ready_i(ar_ready),
+    // ---------------------------------------------------------
+
+    //AXI read data bus ----------------------------------------
+.r_id_i(r_id),
+.r_data_i(r_data),
+.r_resp_i(r_resp),
+.r_last_i(r_last),
+.r_user_i(r_user),
+.r_valid_i(r_valid),
+.r_ready_o(r_ready)
+);
+
+axi_cdma_0 your_instance_name (
+  .s_axi_lite_aclk(clk),                    // input wire s_axi_lite_aclk
+  .s_axi_lite_aresetn(aresetn),             // input wire s_axi_lite_aresetn
+  .cdma_introut(dma_introut),              // output wire cdma_introut
+  .s_axi_lite_awready(aw_ready),  // output wire s_axi_lite_awready
+  .s_axi_lite_awvalid(aw_valid),  // input wire s_axi_lite_awvalid
+  .s_axi_lite_awaddr(aw_addr),    // input wire [5 : 0] s_axi_lite_awaddr
+  .s_axi_lite_wready(w_ready),    // output wire s_axi_lite_wready
+  .s_axi_lite_wvalid(w_valid),    // input wire s_axi_lite_wvalid
+  .s_axi_lite_wdata(w_data),      // input wire [31 : 0] s_axi_lite_wdata
+  .s_axi_lite_bready(b_ready),    // input wire s_axi_lite_bready
+  .s_axi_lite_bvalid(b_valid),    // output wire s_axi_lite_bvalid
+  .s_axi_lite_bresp(b_resp),      // output wire [1 : 0] s_axi_lite_bresp
+  .s_axi_lite_arready(ar_ready),  // output wire s_axi_lite_arready
+  .s_axi_lite_arvalid(ar_valid),  // input wire s_axi_lite_arvalid
+  .s_axi_lite_araddr(ar_addr),    // input wire [5 : 0] s_axi_lite_araddr
+  .s_axi_lite_rready(r_ready),    // input wire s_axi_lite_rready
+  .s_axi_lite_rvalid(r_valid),    // output wire s_axi_lite_rvalid
+  .s_axi_lite_rdata(r_data),      // output wire [31 : 0] s_axi_lite_rdata
+  .s_axi_lite_rresp(r_resp),      // output wire [1 : 0] s_axi_lite_rresp
+  .m_axi_aclk     ( clk                  ), 
+//  .m_axi_aresetn  ( aresetn              ),     
+  .m_axi_awvalid  ( dbg_master.aw_valid  ),
+  .m_axi_awaddr   ( dbg_master.aw_addr   ),
+  .m_axi_awprot   ( dbg_master.aw_prot   ),
+//  .m_axi_awregion ( dbg_master.aw_region ),
+  .m_axi_awlen    ( dbg_master.aw_len    ),
+  .m_axi_awsize   ( dbg_master.aw_size   ),
+  .m_axi_awburst  ( dbg_master.aw_burst  ),
+//  .m_axi_awlock   ( dbg_master.aw_lock   ),
+  .m_axi_awcache  ( dbg_master.aw_cache  ),
+//  .m_axi_awqos    ( dbg_master.aw_qos    ),
+//  .m_axi_awid     ( dbg_master.aw_id     ),
+//  .m_axi_awuser   ( dbg_master.aw_user   ),
+  .m_axi_awready  ( dbg_master.aw_ready  ),
+
+  .m_axi_arvalid  ( dbg_master.ar_valid  ),
+  .m_axi_araddr   ( dbg_master.ar_addr   ),
+  .m_axi_arprot   ( dbg_master.ar_prot   ),
+//  .m_axi_arregion ( dbg_master.ar_region ),
+  .m_axi_arlen    ( dbg_master.ar_len    ),
+  .m_axi_arsize   ( dbg_master.ar_size   ),
+  .m_axi_arburst  ( dbg_master.ar_burst  ),
+//  .m_axi_arlock   ( dbg_master.ar_lock   ),
+  .m_axi_arcache  ( dbg_master.ar_cache  ),
+//  .m_axi_arqos    ( dbg_master.ar_qos    ),
+//  .m_axi_arid     ( dbg_master.ar_id     ),
+//  .m_axi_aruser   ( dbg_master.ar_user   ),
+  .m_axi_arready  ( dbg_master.ar_ready  ),
+
+  .m_axi_wvalid   ( dbg_master.w_valid   ),
+//  .m_axi_wid      (                      ),
+  .m_axi_wdata    ( dbg_master.w_data    ),
+  .m_axi_wstrb    ( dbg_master.w_strb    ),
+//  .m_axi_wuser    ( dbg_master.w_user    ),
+  .m_axi_wlast    ( dbg_master.w_last    ),
+  .m_axi_wready   ( dbg_master.w_ready   ),
+
+  .m_axi_rvalid   ( dbg_master.r_valid   ),
+  .m_axi_rdata    ( dbg_master.r_data    ),
+  .m_axi_rresp    ( dbg_master.r_resp    ),
+  .m_axi_rlast    ( dbg_master.r_last    ),
+//  .m_axi_rid      ( dbg_master.r_id      ),
+//  .m_axi_ruser    ( dbg_master.r_user    ),
+  .m_axi_rready   ( dbg_master.r_ready   ),
+
+  .m_axi_bvalid   ( dbg_master.b_valid   ),
+  .m_axi_bresp    ( dbg_master.b_resp    ),
+//  .m_axi_bid      ( dbg_master.b_id      ),
+//  .m_axi_buser    ( dbg_master.b_user    ),
+  .m_axi_bready   ( dbg_master.b_ready   ),
+  .cdma_tvect_out ( dma_tvect       )          // output wire [31 : 0] cdma_tvect_out
+);
+   
 assign {dbg_master.aw_user,dbg_master.ar_user,dbg_master.w_user} = 'b0;
     
 `ifdef PROTO_WRAPPER

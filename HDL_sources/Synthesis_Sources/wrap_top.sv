@@ -236,7 +236,7 @@ module wrap_top
               .AXI_DATA_WIDTH ( AXI_DATA_WIDTH    ),
               .AXI_ID_WIDTH   ( AXI_ID_WIDTH      ),
               .AXI_USER_WIDTH ( AXI_USER_WIDTH    )
-    ) master0_if(), master1_if(), dbg0_if();
+    ) master0_if(), master1_if(), master2_if(), dbg0_if();
   
 display_top display(.clk    (clk_i),
                  .rst       (!rst_ni),
@@ -271,11 +271,11 @@ display_top display(.clk    (clk_i),
         end
     end
 
-    logic        master0_req,     master1_req,     master3_req;
-    logic [63:0] master0_address, master1_address, master3_address;
-    logic [7:0]  master0_we,      master1_we,      master3_we;
-    logic [63:0] master0_wdata,   master1_wdata,   master3_wdata;
-    logic [63:0] master0_rdata,   master1_rdata,   master3_rdata;
+    logic        master0_req,     master1_req,     master2_req;
+    logic [63:0] master0_address, master1_address, master2_address;
+    logic [7:0]  master0_we,      master1_we,      master2_we;
+    logic [63:0] master0_wdata,   master1_wdata,   master2_wdata;
+    logic [63:0] master0_rdata,   master1_rdata,   master2_rdata;
 
         // Debug Interface
          logic                           debug_gnt_o;
@@ -296,6 +296,7 @@ display_top display(.clk    (clk_i),
       .slave0_if  ( dbg0_if    ),
       .master0_if ( master0_if ),
       .master1_if ( master1_if ),
+      .master2_if ( master2_if ),
       .clk_i      ( clk_i      ),
       .rst_ni     ( rst_ni     ));
 
@@ -329,6 +330,12 @@ display_top display(.clk    (clk_i),
         .boot_addr(master1_address[15:0]),  // input wire [13: 0] addra
         .boot_wdata(master1_wdata),  // input wire [63 : 0] dina
         .boot_rdata(master1_rdata),  // output wire [63 : 0] douta
+        // JTAG shared memory at location 'h42000000
+        .wrap_en(master2_req),      // input wire ena
+        .wrap_we(master2_we),   // input wire [7 : 0] wea
+        .wrap_addr(master2_address[15:0]),  // input wire [13: 0] addra
+        .wrap_wdata(master2_wdata),  // input wire [63 : 0] dina
+        .wrap_rdata(master2_rdata),  // output wire [63 : 0] douta
         .address    ( dbg_mstaddress ),
         .tms_i      ( 1'b0           ),
         .tck_i      ( 1'b0           ),
@@ -365,7 +372,18 @@ axi_ram_wrap  #(
         .bram_rddata_a ( master1_rdata   ),
         .bram_clk_a ( ),
         .bram_rst_a ( )
-    );
+    ), i_master2 (
+                .clk_i  ( clk_i           ),
+                .rst_ni ( rst_ni          ),
+                .slave  ( master2_if      ),
+                .bram_en_a  ( master2_req     ),
+                .bram_addr_a ( master2_address ),
+                .bram_we_a   ( master2_we      ),
+                .bram_wrdata_a ( master2_wdata   ),
+                .bram_rddata_a ( master2_rdata   ),
+                .bram_clk_a ( ),
+                .bram_rst_a ( )
+            );
 
    assign hid_we = master0_we;
    assign hid_wrdata = master0_wdata;
